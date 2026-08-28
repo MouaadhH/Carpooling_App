@@ -5,7 +5,7 @@ const databaseRoutes = require("./routes/databaseRoutes");
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const testRoutes = require("./routes/testRoutes");
-
+const rideRoutes = require("./routes/rideRoutes");
 const app = express();
 
 const PORT = 3000;
@@ -22,6 +22,7 @@ app.use("/api/database", databaseRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/test", testRoutes);
+app.use("/api/rides", rideRoutes);
 
 connectDB();
 
