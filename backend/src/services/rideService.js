@@ -48,6 +48,109 @@ const createRide = async ({
     return result.recordset[0];
 };
 
+const getAvailableRides = async () => {
+
+    const pool = getPool();
+
+    const result = await pool
+        .request()
+        .query(`
+            SELECT
+                r.id_ride,
+                r.prix_total,
+                r.distance,
+                r.empty_seats,
+                r.departure_time,
+                r.status_ride,
+                r.commission,
+                r.creation_date_ride,
+                r.id_driver_posted,
+                r.id_vehicile,
+                r.id_adresse_start,
+                r.id_adresse_arrive,
+
+                u.name_u AS driver_name,
+
+                a1.latitude AS start_latitude,
+                a1.longitude AS start_longitude,
+                a1.libelle AS start_label,
+
+                a2.latitude AS arrive_latitude,
+                a2.longitude AS arrive_longitude,
+                a2.libelle AS arrive_label
+
+            FROM RIDE r
+
+            INNER JOIN [USER] u
+                ON r.id_driver_posted = u.id_user
+
+            INNER JOIN ADRESSE a1
+                ON r.id_adresse_start = a1.id_adresse
+
+            INNER JOIN ADRESSE a2
+                ON r.id_adresse_arrive = a2.id_adresse
+
+            WHERE r.status_ride = 'active'
+              AND r.departure_time >= SYSDATETIME()
+
+            ORDER BY r.departure_time ASC
+        `);
+
+    return result.recordset;
+};
+
+const getRideById = async (id_ride) => {
+
+    const pool = getPool();
+
+    const result = await pool
+        .request()
+        .input("id_ride", id_ride)
+        .query(`
+            SELECT
+                r.id_ride,
+                r.prix_total,
+                r.distance,
+                r.empty_seats,
+                r.departure_time,
+                r.status_ride,
+                r.commission,
+                r.creation_date_ride,
+                r.id_driver_posted,
+                r.id_vehicile,
+                r.id_adresse_start,
+                r.id_adresse_arrive,
+
+                u.name_u AS driver_name,
+                u.phone_u AS driver_phone,
+
+                a1.latitude AS start_latitude,
+                a1.longitude AS start_longitude,
+                a1.libelle AS start_label,
+
+                a2.latitude AS arrive_latitude,
+                a2.longitude AS arrive_longitude,
+                a2.libelle AS arrive_label
+
+            FROM RIDE r
+
+            INNER JOIN [USER] u
+                ON r.id_driver_posted = u.id_user
+
+            INNER JOIN ADRESSE a1
+                ON r.id_adresse_start = a1.id_adresse
+
+            INNER JOIN ADRESSE a2
+                ON r.id_adresse_arrive = a2.id_adresse
+
+            WHERE r.id_ride = @id_ride
+        `);
+
+    return result.recordset[0];
+};
+
 module.exports = {
-    createRide
+    createRide,
+    getAvailableRides,
+     getRideById
 };

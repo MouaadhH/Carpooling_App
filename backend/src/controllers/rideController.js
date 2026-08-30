@@ -1,4 +1,8 @@
-const { createRide } = require("../services/rideService");
+const {
+    createRide,
+    getAvailableRides,
+    getRideById
+} = require("../services/rideService");
 
 const createRideController = async (req, res) => {
     try {
@@ -52,6 +56,60 @@ const createRideController = async (req, res) => {
     }
 };
 
+const getAvailableRidesController = async (req, res) => {
+    try {
+
+        const rides = await getAvailableRides();
+
+        res.status(200).json({
+            message: "Available rides retrieved successfully",
+            rides
+        });
+
+    } catch (error) {
+
+        console.error("GET RIDES ERROR:", error);
+
+        res.status(500).json({
+            message: "Failed to retrieve rides",
+            error: error.message
+        });
+    }
+};
+
+const getRideByIdController = async (req, res) => {
+    try {
+
+        const { id } = req.params;
+
+        const ride = await getRideById(id);
+
+        if (!ride) {
+            return res.status(404).json({
+                message: "Ride not found"
+            });
+        }
+
+        res.status(200).json({
+            message: "Ride retrieved successfully",
+            ride
+        });
+
+    } catch (error) {
+
+        console.error("GET RIDE ERROR:", error);
+
+        res.status(500).json({
+            message: "Failed to retrieve ride",
+            error: error.message
+        });
+    }
+};
+
+
+
 module.exports = {
-    createRideController
+    createRideController,
+    getAvailableRidesController,
+    getRideByIdController
 };
