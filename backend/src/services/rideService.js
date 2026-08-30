@@ -149,8 +149,80 @@ const getRideById = async (id_ride) => {
     return result.recordset[0];
 };
 
+const updateRide = async ({
+    id_ride,
+    id_driver_posted,
+    id_vehicile,
+    id_adresse_start,
+    id_adresse_arrive,
+    departure_time,
+    distance,
+    empty_seats
+}) => {
+
+    const pool = getPool();
+
+    const result = await pool
+        .request()
+        .input("id_ride", id_ride)
+        .input("id_driver_posted", id_driver_posted)
+        .input("id_vehicile", id_vehicile)
+        .input("id_adresse_start", id_adresse_start)
+        .input("id_adresse_arrive", id_adresse_arrive)
+        .input("departure_time", departure_time)
+        .input("distance", distance)
+        .input("empty_seats", empty_seats)
+        .query(`
+            UPDATE RIDE
+            SET
+                id_vehicile = @id_vehicile,
+                id_adresse_start = @id_adresse_start,
+                id_adresse_arrive = @id_adresse_arrive,
+                departure_time = @departure_time,
+                distance = @distance,
+                empty_seats = @empty_seats
+            WHERE id_ride = @id_ride
+              AND id_driver_posted = @id_driver_posted;
+
+            SELECT *
+            FROM RIDE
+            WHERE id_ride = @id_ride;
+        `);
+
+    return result.recordset[0];
+};
+
+const cancelRide = async ({
+    id_ride,
+    id_driver_posted
+}) => {
+
+    const pool = getPool();
+
+    const result = await pool
+        .request()
+        .input("id_ride", id_ride)
+        .input("id_driver_posted", id_driver_posted)
+        .query(`
+            UPDATE RIDE
+            SET status_ride = 'cancelled'
+            WHERE id_ride = @id_ride
+              AND id_driver_posted = @id_driver_posted
+              AND status_ride = 'active';
+
+            SELECT *
+            FROM RIDE
+            WHERE id_ride = @id_ride
+              AND id_driver_posted = @id_driver_posted;
+        `);
+
+    return result.recordset[0];
+};
+
 module.exports = {
     createRide,
     getAvailableRides,
-     getRideById
+    getRideById,
+    updateRide,
+    cancelRide
 };
