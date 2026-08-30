@@ -6,6 +6,7 @@ const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const testRoutes = require("./routes/testRoutes");
 const rideRoutes = require("./routes/rideRoutes");
+const rideRequestRoutes = require("./routes/riderequestroutes");
 const app = express();
 
 const PORT = 3000;
@@ -23,6 +24,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/test", testRoutes);
 app.use("/api/rides", rideRoutes);
+app.use("/api/rides", rideRequestRoutes);
 
 connectDB();
 
