@@ -1,9 +1,12 @@
 const express = require("express");
 
 const {
-    createRideController
+    createRideController,
+    getAvailableRidesController,
+    getRideByIdController
 } = require("../controllers/rideController");
 
+//middlewares------------------------
 const {
     authenticateToken
 } = require("../middleware/authMiddleware");
@@ -13,12 +16,24 @@ const {
 } = require("../middleware/roleMiddleware");
 
 const router = express.Router();
-
+//-------------------------------------
 router.post(
     "/",
     authenticateToken,
     authorizeRoles("driver"),
     createRideController
+);
+
+router.get(
+    "/",
+    authenticateToken,
+    getAvailableRidesController
+);
+
+router.get(
+    "/:id",
+    authenticateToken,
+    getRideByIdController
 );
 
 module.exports = router;
