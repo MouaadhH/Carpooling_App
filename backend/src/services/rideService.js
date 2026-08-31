@@ -219,10 +219,49 @@ const cancelRide = async ({
     return result.recordset[0];
 };
 
+const updateRideAvailability = async ({
+    id_ride,
+    id_driver,
+    is_available
+}) => {
+
+    const pool = getPool();
+
+    const result = await pool
+        .request()
+        .input("id_ride", id_ride)
+        .input("id_driver", id_driver)
+        .input("is_available", is_available)
+        .query(`
+            UPDATE RIDE
+            SET is_available = @is_available
+            WHERE id_ride = @id_ride
+              AND id_driver_posted = @id_driver
+              AND status_ride = 'active'
+              AND (
+                    @is_available = 0
+                    OR empty_seats > 0
+                  );
+
+            SELECT *
+            FROM RIDE
+            WHERE id_ride = @id_ride;
+        `);
+
+    if (result.recordset.length === 0) {
+        throw new Error(
+            "Ride not found or you are not the driver who posted it"
+        );
+    }
+
+    return result.recordset[0];
+};
+
 module.exports = {
     createRide,
     getAvailableRides,
     getRideById,
     updateRide,
-    cancelRide
+    cancelRide,
+    updateRideAvailability
 };

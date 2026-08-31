@@ -365,13 +365,12 @@ const requestToJoinRide = async ({
 const approveRideRequest = async ({ id_ride_request, id_driver }) => {
 
     const pool = getPool();
-
     const transaction = new sql.Transaction(pool);
 
     try {
         await transaction.begin();
 
-        // Get the request and the ride together
+        // Get the request + corresponding ride
         const requestResult = await new sql.Request(transaction)
             .input("id_ride_request", id_ride_request)
             .query(`
@@ -383,7 +382,8 @@ const approveRideRequest = async ({ id_ride_request, id_driver }) => {
                     rr.status,
                     r.id_driver_posted,
                     r.empty_seats,
-                    r.status_ride
+                    r.status_ride,
+                    r.is_available
                 FROM RIDE_REQUEST rr
                 INNER JOIN RIDE r
                     ON rr.id_ride = r.id_ride
@@ -396,27 +396,46 @@ const approveRideRequest = async ({ id_ride_request, id_driver }) => {
 
         const request = requestResult.recordset[0];
 
-        // Make sure this driver owns the ride
+        // Only the driver who posted the ride can approve it
         if (Number(request.id_driver_posted) !== Number(id_driver)) {
-            throw new Error("You are not the driver who posted this ride");
+            throw new Error(
+                "You are not the driver who posted this ride"
+            );
         }
 
         // Request must still be pending
         if (request.status !== "pending") {
-            throw new Error("This ride request is no longer pending");
+            throw new Error(
+                "This ride request is no longer pending"
+            );
         }
 
         // Ride must still be active
         if (request.status_ride !== "active") {
-            throw new Error("This ride is no longer active");
+            throw new Error(
+                "This ride is no longer active"
+            );
         }
 
-        // Check seats
+        // Driver must still be accepting passengers
+        if (!request.is_available) {
+            throw new Error(
+                "This ride is no longer accepting passengers"
+            );
+        }
+
+        // Check available seats
         if (request.empty_seats < request.seats_needed) {
-            throw new Error("Not enough available seats");
+            throw new Error(
+                "Not enough available seats"
+            );
         }
 
-        // Approve request
+        // Calculate remaining seats
+        const remainingSeats =
+            request.empty_seats - request.seats_needed;
+
+        // Approve the request
         await new sql.Request(transaction)
             .input("id_ride_request", id_ride_request)
             .query(`
@@ -425,13 +444,19 @@ const approveRideRequest = async ({ id_ride_request, id_driver }) => {
                 WHERE id_ride_request = @id_ride_request
             `);
 
-        // Reduce available seats
+        // Update ride seats + availability
         await new sql.Request(transaction)
             .input("id_ride", request.id_ride)
-            .input("seats_needed", request.seats_needed)
+            .input("remaining_seats", remainingSeats)
             .query(`
                 UPDATE RIDE
-                SET empty_seats = empty_seats - @seats_needed
+                SET
+                    empty_seats = @remaining_seats,
+                    is_available =
+                        CASE
+                            WHEN @remaining_seats = 0 THEN 0
+                            ELSE is_available
+                        END
                 WHERE id_ride = @id_ride
             `);
 

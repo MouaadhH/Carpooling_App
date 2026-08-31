@@ -3,7 +3,8 @@ const {
     getAvailableRides,
     getRideById,
     updateRide,
-    cancelRide
+    cancelRide,
+    updateRideAvailability
 } = require("../services/rideService");
 
 const createRideController = async (req, res) => {
@@ -205,6 +206,46 @@ const cancelRideController = async (req, res) => {
     }
 };
 
+const updateRideAvailabilityController = async (req, res) => {
+
+    try {
+
+        const id_ride = req.params.id;
+        const id_driver = req.user.id_user;
+
+        const { is_available } = req.body;
+
+        if (typeof is_available !== "boolean") {
+            return res.status(400).json({
+                message: "is_available must be true or false"
+            });
+        }
+
+        const ride = await updateRideAvailability({
+            id_ride,
+            id_driver,
+            is_available
+        });
+
+        res.status(200).json({
+            message: "Ride availability updated successfully",
+            ride
+        });
+
+    } catch (error) {
+
+        console.error(
+            "UPDATE RIDE AVAILABILITY ERROR:",
+            error
+        );
+
+        res.status(400).json({
+            message: "Failed to update ride availability",
+            error: error.message
+        });
+    }
+};
+
 
 
 
@@ -213,5 +254,6 @@ module.exports = {
     getAvailableRidesController,
     getRideByIdController,
     updateRideController,
-    cancelRideController
+    cancelRideController,
+    updateRideAvailabilityController
 };
