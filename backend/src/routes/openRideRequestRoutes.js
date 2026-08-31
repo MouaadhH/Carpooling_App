@@ -1,11 +1,9 @@
 const express = require("express");
 
 const {
-    createRideRequestController,
-    getRideRequestsController,
     createOpenRideRequestController,
-    approveRideRequestController,
-    rejectRideRequestController
+    getOpenRideRequestsController,
+    acceptOpenRideRequestController
 } = require("../controllers/rideRequestController");
 
 const {
@@ -19,38 +17,24 @@ const {
 const router = express.Router();
 
 router.post(
-    "/:id/request",
-    authenticateToken,
-    authorizeRoles("passenger"),
-    createRideRequestController
-);
-
-router.get(
-    "/:id/requests",
-    authenticateToken,
-    authorizeRoles("driver"),
-    getRideRequestsController
-);
-
-router.post(
     "/",
     authenticateToken,
     authorizeRoles("passenger"),
     createOpenRideRequestController
 );
 
-router.patch(
-    "/requests/:id/approve",
+router.get(
+    "/",
     authenticateToken,
     authorizeRoles("driver"),
-    approveRideRequestController
+    getOpenRideRequestsController
 );
 
 router.patch(
-    "/requests/:id/reject",
+    "/:id/accept",
     authenticateToken,
     authorizeRoles("driver"),
-    rejectRideRequestController
+    acceptOpenRideRequestController
 );
 
 module.exports = router;

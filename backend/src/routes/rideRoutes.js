@@ -5,7 +5,8 @@ const {
     getAvailableRidesController,
     getRideByIdController,
     updateRideController,
-    cancelRideController
+    cancelRideController,
+    
 } = require("../controllers/rideController");
 
 //middlewares------------------------
