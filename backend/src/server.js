@@ -7,6 +7,8 @@ const userRoutes = require("./routes/userRoutes");
 const testRoutes = require("./routes/testRoutes");
 const rideRoutes = require("./routes/rideRoutes");
 const rideRequestRoutes = require("./routes/riderequestroutes");
+const openRideRequestRoutes = require("./routes/openRideRequestRoutes");
+
 const app = express();
 
 const PORT = 3000;
@@ -25,6 +27,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/test", testRoutes);
 app.use("/api/rides", rideRoutes);
 app.use("/api/rides", rideRequestRoutes);
+app.use("/api/ride-requests", openRideRequestRoutes);
 
 connectDB();
 
