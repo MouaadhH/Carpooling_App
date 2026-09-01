@@ -1,5 +1,6 @@
 const { getPool } = require("../config/db");
 
+
 const createRide = async ({
     id_driver_posted,
     id_vehicile,
@@ -192,31 +193,93 @@ const updateRide = async ({
     return result.recordset[0];
 };
 
-const cancelRide = async ({
-    id_ride,
-    id_driver_posted
-}) => {
+const cancelRide = async ({ id_ride, id_driver }) => {
 
     const pool = getPool();
+    const transaction = new sql.Transaction(pool);
 
-    const result = await pool
-        .request()
-        .input("id_ride", id_ride)
-        .input("id_driver_posted", id_driver_posted)
-        .query(`
-            UPDATE RIDE
-            SET status_ride = 'cancelled'
-            WHERE id_ride = @id_ride
-              AND id_driver_posted = @id_driver_posted
-              AND status_ride = 'active';
+    try {
 
-            SELECT *
-            FROM RIDE
-            WHERE id_ride = @id_ride
-              AND id_driver_posted = @id_driver_posted;
-        `);
+        await transaction.begin();
 
-    return result.recordset[0];
+        // 1. Verify that the ride belongs to this driver
+        //    and can still be cancelled.
+        const rideResult = await new sql.Request(transaction)
+            .input("id_ride", id_ride)
+            .input("id_driver", id_driver)
+            .query(`
+                SELECT
+                    id_ride,
+                    id_driver_posted,
+                    status_ride
+                FROM RIDE
+                WHERE id_ride = @id_ride
+                  AND id_driver_posted = @id_driver
+            `);
+
+        if (rideResult.recordset.length === 0) {
+            throw new Error(
+                "Ride not found or you are not the driver who posted it"
+            );
+        }
+
+        const ride = rideResult.recordset[0];
+
+        // 2. Only active rides can be cancelled.
+        if (ride.status_ride !== "active") {
+            throw new Error(
+                "Only active rides can be cancelled"
+            );
+        }
+
+        // 3. Cancel the ride.
+        await new sql.Request(transaction)
+            .input("id_ride", id_ride)
+            .query(`
+                UPDATE RIDE
+                SET
+                    status_ride = 'cancelled',
+                    is_available = 0
+                WHERE id_ride = @id_ride
+                 AND status IN ('pending', 'approved')
+            `);
+
+        // 4. Cancel passenger requests that were already approved.
+        await new sql.Request(transaction)
+            .input("id_ride", id_ride)
+            .query(`
+                UPDATE RIDE_REQUEST
+                SET status = 'cancelled'
+                WHERE id_ride = @id_ride
+                  AND status = 'approved'
+            `);
+
+        // 5. Get the final ride state.
+        const result = await new sql.Request(transaction)
+            .input("id_ride", id_ride)
+            .query(`
+                SELECT *
+                FROM RIDE
+                WHERE id_ride = @id_ride
+            `);
+
+        await transaction.commit();
+
+        return result.recordset[0];
+
+    } catch (error) {
+
+        try {
+            await transaction.rollback();
+        } catch (rollbackError) {
+            console.error(
+                "ROLLBACK ERROR:",
+                rollbackError
+            );
+        }
+
+        throw error;
+    }
 };
 
 const updateRideAvailability = async ({
@@ -286,6 +349,7 @@ const startRide = async ({ id_ride, id_driver }) => {
 
     return result.recordset[0];
 };
+
 
 module.exports = {
     createRide,
