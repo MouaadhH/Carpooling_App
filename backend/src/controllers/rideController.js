@@ -4,7 +4,8 @@ const {
     getRideById,
     updateRide,
     cancelRide,
-    updateRideAvailability
+    updateRideAvailability,
+    startRide
 } = require("../services/rideService");
 
 const createRideController = async (req, res) => {
@@ -246,7 +247,36 @@ const updateRideAvailabilityController = async (req, res) => {
     }
 };
 
+const startRideController = async (req, res) => {
 
+    try {
+
+        const id_ride = req.params.id;
+        const id_driver = req.user.id_user;
+
+        const ride = await startRide({
+            id_ride,
+            id_driver
+        });
+
+        res.status(200).json({
+            message: "Ride started successfully",
+            ride
+        });
+
+    } catch (error) {
+
+        console.error(
+            "START RIDE ERROR:",
+            error
+        );
+
+        res.status(400).json({
+            message: "Failed to start ride",
+            error: error.message
+        });
+    }
+};
 
 
 module.exports = {
@@ -255,5 +285,6 @@ module.exports = {
     getRideByIdController,
     updateRideController,
     cancelRideController,
-    updateRideAvailabilityController
+    updateRideAvailabilityController,
+    startRideController
 };
