@@ -1,4 +1,4 @@
-const { getPool } = require("../config/db");
+const { sql , getPool } = require("../config/db");
 
 
 const createRide = async ({
@@ -241,7 +241,7 @@ const cancelRide = async ({ id_ride, id_driver }) => {
                     status_ride = 'cancelled',
                     is_available = 0
                 WHERE id_ride = @id_ride
-                 AND status IN ('pending', 'approved')
+                 and status_ride = 'active'
             `);
 
         // 4. Cancel passenger requests that were already approved.
@@ -251,7 +251,7 @@ const cancelRide = async ({ id_ride, id_driver }) => {
                 UPDATE RIDE_REQUEST
                 SET status = 'cancelled'
                 WHERE id_ride = @id_ride
-                  AND status = 'approved'
+                  AND status IN ('approved', 'pending')
             `);
 
         // 5. Get the final ride state.

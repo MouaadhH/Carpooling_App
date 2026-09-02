@@ -174,22 +174,16 @@ const updateRideController = async (req, res) => {
 
 const cancelRideController = async (req, res) => {
     try {
+        console.log("USER FROM JWT:", req.user);
+        console.log("RIDE ID:", req.params.id);
 
-        const { id } = req.params;
-
-        // Driver identity comes from JWT
-        const id_driver_posted = req.user.id_user;
+        const id_ride = req.params.id;
+        const id_driver = req.user.id_user;
 
         const ride = await cancelRide({
-            id_ride: id,
-            id_driver_posted
+            id_ride,
+            id_driver
         });
-
-        if (!ride) {
-            return res.status(404).json({
-                message: "Ride not found, not owned by you, or already cancelled"
-            });
-        }
 
         res.status(200).json({
             message: "Ride cancelled successfully",
@@ -197,7 +191,6 @@ const cancelRideController = async (req, res) => {
         });
 
     } catch (error) {
-
         console.error("CANCEL RIDE ERROR:", error);
 
         res.status(500).json({
