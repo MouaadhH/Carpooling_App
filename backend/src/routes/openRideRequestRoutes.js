@@ -3,7 +3,8 @@ const express = require("express");
 const {
     createOpenRideRequestController,
     getOpenRideRequestsController,
-    acceptOpenRideRequestController
+    acceptOpenRideRequestController,
+    cancelRideRequestController
 } = require("../controllers/rideRequestController");
 
 const {
@@ -35,6 +36,13 @@ router.patch(
     authenticateToken,
     authorizeRoles("driver"),
     acceptOpenRideRequestController
+);
+
+router.patch(
+    "/:id/cancel",
+    authenticateToken,
+    authorizeRoles("passenger"),
+    cancelRideRequestController
 );
 
 module.exports = router;

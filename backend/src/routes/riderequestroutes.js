@@ -5,7 +5,8 @@ const {
     getRideRequestsController,
     createOpenRideRequestController,
     approveRideRequestController,
-    rejectRideRequestController
+    rejectRideRequestController,
+    cancelRideRequestController
 } = require("../controllers/rideRequestController");
 
 const {
@@ -52,5 +53,13 @@ router.patch(
     authorizeRoles("driver"),
     rejectRideRequestController
 );
+
+router.patch(
+    "/requests/:id/cancel",
+    authenticateToken,
+    authorizeRoles("passenger"),
+    cancelRideRequestController
+);
+
 
 module.exports = router;

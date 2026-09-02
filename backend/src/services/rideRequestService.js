@@ -512,6 +512,43 @@ const rejectRideRequest = async ({ id_ride_request, id_driver }) => {
     return result.recordset[0];
 };
 
+const cancelRideRequest = async ({ id_ride_request, id_user }) => {
+
+    const pool = getPool();
+
+    const result = await pool
+        .request()
+        .input("id_ride_request", id_ride_request)
+        .input("id_user", id_user)
+        .query(`
+            UPDATE RIDE_REQUEST
+            SET status = 'cancelled'
+            WHERE id_ride_request = @id_ride_request
+              AND id_user = @id_user
+              AND status = 'pending';
+
+            SELECT *
+            FROM RIDE_REQUEST
+            WHERE id_ride_request = @id_ride_request
+              AND id_user = @id_user;
+        `);
+
+    if (result.recordset.length === 0) {
+        throw new Error(
+            "Ride request not found"
+        );
+    }
+
+    const request = result.recordset[0];
+
+    if (request.status !== "cancelled") {
+        throw new Error(
+            "Only pending ride requests can be cancelled"
+        );
+    }
+
+    return request;
+};
 
 module.exports = {
     createRideRequest,
@@ -520,5 +557,6 @@ module.exports = {
     acceptOpenRideRequest,
     requestToJoinRide,
     approveRideRequest,
-    rejectRideRequest
+    rejectRideRequest,
+    cancelRideRequest
 };

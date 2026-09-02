@@ -5,7 +5,8 @@ const {
     acceptOpenRideRequest,
     requestToJoinRide,
     approveRideRequest,
-    rejectRideRequest
+    rejectRideRequest,
+    cancelRideRequest
 } = require("../services/rideRequestService");
 
 const createRideRequestController = async (req, res) => {
@@ -246,6 +247,36 @@ const rejectRideRequestController = async (req, res) => {
     }
 };
 
+const cancelRideRequestController = async (req, res) => {
+
+    try {
+
+        const id_ride_request = req.params.id;
+
+        // Passenger identity comes from JWT
+        const id_user = req.user.id_user;
+
+        const request = await cancelRideRequest({
+            id_ride_request,
+            id_user
+        });
+
+        res.status(200).json({
+            message: "Ride request cancelled successfully",
+            request
+        });
+
+    } catch (error) {
+
+        console.error("CANCEL RIDE REQUEST ERROR:", error);
+
+        res.status(400).json({
+            message: "Failed to cancel ride request",
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     createRideRequestController,
     getRideRequestsController,
@@ -253,5 +284,6 @@ module.exports = {
     getOpenRideRequestsController,
     acceptOpenRideRequestController,
     approveRideRequestController,
-    rejectRideRequestController
+    rejectRideRequestController,
+    cancelRideRequestController
 };
