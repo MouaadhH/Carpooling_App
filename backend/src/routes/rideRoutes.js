@@ -7,7 +7,8 @@ const {
     updateRideController,
     cancelRideController,
     updateRideAvailabilityController,
-    startRideController
+    startRideController,
+    updateRideLocationController
     
 } = require("../controllers/rideController");
 
@@ -67,6 +68,13 @@ router.patch(
     authenticateToken,
     authorizeRoles("driver"),
     startRideController
+);
+
+router.patch(
+    "/:id/location",
+    authenticateToken,
+    authorizeRoles("driver"),
+    updateRideLocationController
 );
 
 module.exports = router;

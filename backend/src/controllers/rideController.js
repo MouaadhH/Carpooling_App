@@ -5,7 +5,8 @@ const {
     updateRide,
     cancelRide,
     updateRideAvailability,
-    startRide
+    startRide,
+    updateRideLocation
 } = require("../services/rideService");
 
 const createRideController = async (req, res) => {
@@ -271,6 +272,50 @@ const startRideController = async (req, res) => {
     }
 };
 
+const updateRideLocationController = async (req, res) => {
+
+    try {
+
+        const id_ride = req.params.id;
+        const id_driver = req.user.id_user;
+
+        const {
+            latitude,
+            longitude
+        } = req.body;
+
+        if (latitude === undefined || longitude === undefined) {
+            return res.status(400).json({
+                message: "Latitude and longitude are required"
+            });
+        }
+
+        const result = await updateRideLocation({
+            id_ride,
+            id_driver,
+            latitude,
+            longitude
+        });
+
+        res.status(200).json({
+            message: result.completed
+                ? "Ride completed successfully"
+                : "Ride location updated",
+            ride: result.ride,
+            distance_meters: result.distance_meters,
+            completed: result.completed
+        });
+
+    } catch (error) {
+
+        console.error("UPDATE RIDE LOCATION ERROR:", error);
+
+        res.status(400).json({
+            message: "Failed to update ride location",
+            error: error.message
+        });
+    }
+};
 
 module.exports = {
     createRideController,
@@ -279,5 +324,6 @@ module.exports = {
     updateRideController,
     cancelRideController,
     updateRideAvailabilityController,
-    startRideController
+    startRideController,
+    updateRideLocationController
 };
