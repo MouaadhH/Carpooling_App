@@ -290,6 +290,13 @@ const updateRideAvailability = async ({
 
     const pool = getPool();
 
+    // Validate availability value
+    if (is_available !== 0 && is_available !== 1) {
+        throw new Error(
+            "is_available must be 0 or 1"
+        );
+    }
+
     const result = await pool
         .request()
         .input("id_ride", id_ride)
@@ -308,7 +315,8 @@ const updateRideAvailability = async ({
 
             SELECT *
             FROM RIDE
-            WHERE id_ride = @id_ride;
+            WHERE id_ride = @id_ride
+              AND id_driver_posted = @id_driver;
         `);
 
     if (result.recordset.length === 0) {
@@ -317,7 +325,20 @@ const updateRideAvailability = async ({
         );
     }
 
-    return result.recordset[0];
+    const ride = result.recordset[0];
+
+    // If the ride is active but the requested availability
+    // could not be applied, the ride state was not changed.
+    if (
+        ride.status_ride !== "active" ||
+        (is_available === 1 && ride.empty_seats <= 0)
+    ) {
+        throw new Error(
+            "Ride cannot be made available"
+        );
+    }
+
+    return ride;
 };
 
 const startRide = async ({ id_ride, id_driver }) => {
