@@ -350,6 +350,136 @@ const startRide = async ({ id_ride, id_driver }) => {
     return result.recordset[0];
 };
 
+const updateRideLocation = async ({
+    id_ride,
+    id_driver,
+    latitude,
+    longitude
+}) => {
+
+    const pool = getPool();
+
+    // Validate GPS coordinates
+    const driverLatitude = Number(latitude);
+    const driverLongitude = Number(longitude);
+
+    if (
+        !Number.isFinite(driverLatitude) ||
+        !Number.isFinite(driverLongitude)
+    ) {
+        throw new Error("Latitude and longitude must be valid numbers");
+    }
+
+    if (
+        driverLatitude < -90 ||
+        driverLatitude > 90
+    ) {
+        throw new Error("Latitude must be between -90 and 90");
+    }
+
+    if (
+        driverLongitude < -180 ||
+        driverLongitude > 180
+    ) {
+        throw new Error("Longitude must be between -180 and 180");
+    }
+
+    // Get the ride and its destination coordinates
+    const result = await pool
+        .request()
+        .input("id_ride", id_ride)
+        .input("id_driver", id_driver)
+        .query(`
+            SELECT
+                r.id_ride,
+                r.id_driver_posted,
+                r.status_ride,
+                r.id_adresse_arrive,
+                a.latitude AS destination_latitude,
+                a.longitude AS destination_longitude
+            FROM RIDE r
+            INNER JOIN ADRESSE a
+                ON r.id_adresse_arrive = a.id_adresse
+            WHERE r.id_ride = @id_ride
+              AND r.id_driver_posted = @id_driver
+        `);
+
+    if (result.recordset.length === 0) {
+        throw new Error(
+            "Ride not found or you are not the driver who posted it"
+        );
+    }
+
+    const ride = result.recordset[0];
+
+    // The ride must already have started
+    if (ride.status_ride !== "in_progress") {
+        throw new Error("Ride is not in progress");
+    }
+
+    const destinationLatitude = Number(ride.destination_latitude);
+    const destinationLongitude = Number(ride.destination_longitude);
+
+    // Convert degrees to radians
+    const toRadians = (degrees) => {
+        return degrees * Math.PI / 180;
+    };
+
+    // Haversine formula
+    const R = 6371000;
+
+    const latDifference =
+        toRadians(destinationLatitude - driverLatitude);
+
+    const lonDifference =
+        toRadians(destinationLongitude - driverLongitude);
+
+    const a =
+        Math.sin(latDifference / 2) ** 2 +
+        Math.cos(toRadians(driverLatitude)) *
+        Math.cos(toRadians(destinationLatitude)) *
+        Math.sin(lonDifference / 2) ** 2;
+
+    const c =
+        2 * Math.atan2(
+            Math.sqrt(a),
+            Math.sqrt(1 - a)
+        );
+
+    const distance = R * c;
+
+    // Arrival radius = 100 meters
+    const ARRIVAL_RADIUS = 100;
+
+    if (distance <= ARRIVAL_RADIUS) {
+
+        const completedResult = await pool
+            .request()
+            .input("id_ride", id_ride)
+            .query(`
+                UPDATE RIDE
+                SET status_ride = 'completed'
+                WHERE id_ride = @id_ride
+                  AND status_ride = 'in_progress';
+
+                SELECT *
+                FROM RIDE
+                WHERE id_ride = @id_ride;
+            `);
+
+        return {
+            ride: completedResult.recordset[0],
+            distance_meters: Math.round(distance),
+            completed: true
+        };
+    }
+
+    return {
+        ride,
+        distance_meters: Math.round(distance),
+        completed: false
+    };
+};
 
 module.exports = {
     createRide,
@@ -358,5 +488,6 @@ module.exports = {
     updateRide,
     cancelRide,
     updateRideAvailability,
-    startRide
+    startRide,
+    updateRideLocation
 };
