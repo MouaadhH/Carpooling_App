@@ -203,6 +203,7 @@ const checkMinimumBalance = async (id_user, transaction = null) => {
                 FROM TARIF_CONFIGURATION
             ) tc
             WHERE w.id_user = @id_user
+            ORDER BY updated_at DESC
         `);
 
     if (walletResult.recordset.length === 0) {

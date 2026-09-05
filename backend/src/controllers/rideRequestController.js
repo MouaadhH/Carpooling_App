@@ -6,7 +6,8 @@ const {
     requestToJoinRide,
     approveRideRequest,
     rejectRideRequest,
-    cancelRideRequest
+    cancelRideRequest,
+    payRideRequest
 } = require("../services/rideRequestService");
 
 const createRideRequestController = async (req, res) => {
@@ -277,6 +278,65 @@ const cancelRideRequestController = async (req, res) => {
     }
 };
 
+const updatePaymentMethodController = async (req, res) => {
+    try {
+        const id_ride_request = req.params.id;
+        const id_user = req.user.id_user;
+        const { payment_method } = req.body;
+
+        if (!payment_method) {
+            return res.status(400).json({
+                message: "payment_method is required"
+            });
+        }
+
+        const updatedRequest = await rideRequestService.updatePaymentMethod({
+            id_ride_request,
+            id_user,
+            payment_method
+        });
+
+        return res.status(200).json({
+            message: "Payment method updated successfully",
+            request: updatedRequest
+        });
+
+    } catch (error) {
+        console.error("Update payment method error:", error);
+
+        return res.status(400).json({
+            message: error.message
+        });
+    }
+};
+
+const payRideRequestController = async (req, res) => {
+    try {
+        const id_ride_request = Number(req.params.id);
+        const id_user = req.user.id_user;
+
+        if (!Number.isInteger(id_ride_request)) {
+            return res.status(400).json({
+                message: "Invalid ride request ID"
+            });
+        }
+
+        const result = await payRideRequest({
+            id_ride_request,
+            id_user
+        });
+
+        return res.status(200).json(result);
+
+    } catch (error) {
+        console.error("Pay ride request error:", error);
+
+        return res.status(400).json({
+            message: error.message
+        });
+    }
+};
+
 module.exports = {
     createRideRequestController,
     getRideRequestsController,
@@ -285,5 +345,7 @@ module.exports = {
     acceptOpenRideRequestController,
     approveRideRequestController,
     rejectRideRequestController,
-    cancelRideRequestController
+    cancelRideRequestController,
+    updatePaymentMethodController,
+    payRideRequestController
 };

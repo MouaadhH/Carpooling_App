@@ -3,8 +3,7 @@ const express = require("express");
 const {
     createOpenRideRequestController,
     getOpenRideRequestsController,
-    acceptOpenRideRequestController,
-    cancelRideRequestController
+    acceptOpenRideRequestController
 } = require("../controllers/rideRequestController");
 
 const {
@@ -17,12 +16,24 @@ const {
 
 const router = express.Router();
 
+
+// ============================================================
+// PASSENGER CREATES OPEN RIDE REQUEST
+// POST /api/open-ride-requests
+// ============================================================
+
 router.post(
     "/",
     authenticateToken,
     authorizeRoles("passenger"),
     createOpenRideRequestController
 );
+
+
+// ============================================================
+// DRIVER GETS OPEN RIDE REQUESTS
+// GET /api/open-ride-requests
+// ============================================================
 
 router.get(
     "/",
@@ -31,6 +42,12 @@ router.get(
     getOpenRideRequestsController
 );
 
+
+// ============================================================
+// DRIVER ACCEPTS OPEN RIDE REQUEST
+// PATCH /api/open-ride-requests/:id/accept
+// ============================================================
+
 router.patch(
     "/:id/accept",
     authenticateToken,
@@ -38,11 +55,5 @@ router.patch(
     acceptOpenRideRequestController
 );
 
-router.patch(
-    "/:id/cancel",
-    authenticateToken,
-    authorizeRoles("passenger"),
-    cancelRideRequestController
-);
 
 module.exports = router;
