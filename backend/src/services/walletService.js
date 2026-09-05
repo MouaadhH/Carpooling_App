@@ -183,9 +183,60 @@ const withdrawFromWallet = async ({ id_user, amount }) => {
         throw error;
     }
 };
+
+const checkMinimumBalance = async (id_user, transaction = null) => {
+
+    const request = transaction
+        ? new sql.Request(transaction)
+        : getPool().request();
+
+    const walletResult = await request
+        .input("id_user", sql.Int, id_user)
+        .query(`
+            SELECT
+                w.balance,
+                tc.min_balance_toride
+            FROM WALLET w
+            CROSS JOIN (
+                SELECT TOP 1
+                    min_balance_toride
+                FROM TARIF_CONFIGURATION
+            ) tc
+            WHERE w.id_user = @id_user
+        `);
+
+    if (walletResult.recordset.length === 0) {
+        throw new Error("Wallet not found");
+    }
+
+    const balance = Number(walletResult.recordset[0].balance);
+    const minimumBalance =
+        Number(walletResult.recordset[0].min_balance_toride);
+
+    if (!Number.isFinite(balance)) {
+        throw new Error("Invalid wallet balance");
+    }
+
+    if (!Number.isFinite(minimumBalance)) {
+        throw new Error("Invalid minimum wallet balance configuration");
+    }
+
+    if (balance < minimumBalance) {
+        throw new Error(
+            `Driver must have at least ${minimumBalance} DA in wallet`
+        );
+    }
+
+    return {
+        balance,
+        minimumBalance
+    };
+};
+
 module.exports = {
     getWalletByUserId,
     getWalletTransactions,
     createWallet,
-    withdrawFromWallet
+    withdrawFromWallet,
+    checkMinimumBalance
 };

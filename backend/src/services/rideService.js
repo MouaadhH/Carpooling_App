@@ -1,5 +1,5 @@
 const { sql , getPool } = require("../config/db");
-
+const { checkMinimumBalance } = require("./walletService");
 
 const createRide = async ({
     id_driver_posted,
@@ -13,46 +13,7 @@ const createRide = async ({
 
     const pool = getPool();
 
-    // Get the minimum balance required to post/accept a ride
-    const configResult = await pool
-        .request()
-        .query(`
-            SELECT TOP 1
-                min_balance_toride
-            FROM TARIF_CONFIGURATION
-        `);
-
-    if (configResult.recordset.length === 0) {
-        throw new Error("Tarif configuration not found");
-    }
-
-    const minimumBalance =
-        Number(configResult.recordset[0].min_balance_toride);
-
-    // Get driver's wallet
-    const walletResult = await pool
-        .request()
-        .input("id_driver", id_driver_posted)
-        .query(`
-            SELECT
-                id_wallet,
-                balance
-            FROM WALLET
-            WHERE id_user = @id_driver
-        `);
-
-    if (walletResult.recordset.length === 0) {
-        throw new Error("Driver wallet not found");
-    }
-
-    const balance = Number(walletResult.recordset[0].balance);
-
-    // Enforce minimum wallet balance
-    if (balance < minimumBalance) {
-        throw new Error(
-            `Driver must have at least ${minimumBalance} DA in wallet to post a ride`
-        );
-    }
+    await checkMinimumBalance(id_driver_posted);
 
     // Create the ride
     const result = await pool
