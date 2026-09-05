@@ -8,12 +8,76 @@ const createRide = async ({
     id_adresse_arrive,
     departure_time,
     distance,
+    prix_total,
     empty_seats
 }) => {
-
     const pool = getPool();
 
+    // Driver must have the minimum balance required to post a ride
     await checkMinimumBalance(id_driver_posted);
+
+    // Convert numeric values
+    const rideDistance = Number(distance);
+    const ridePrice = Number(prix_total);
+
+    // Validate distance
+    if (!Number.isFinite(rideDistance) || rideDistance <= 0) {
+        throw new Error("Distance must be a valid positive number");
+    }
+
+    // Validate price
+    if (!Number.isFinite(ridePrice) || ridePrice < 0) {
+        throw new Error("prix_total must be a valid positive number");
+    }
+
+    /*
+        Get the current tariff configuration.
+
+        We use the latest configuration because the allowed
+        price range can change when the admin changes tariffs.
+    */
+    const tariffResult = await pool
+        .request()
+        .query(`
+            SELECT TOP 1
+                suggested_price_perKM,
+                min_price_perKM,
+                max_price_perKM,
+                commision_percentage,
+                min_balance_toride
+            FROM TARIF_CONFIGURATION
+            ORDER BY updated_at DESC
+        `);
+
+    if (tariffResult.recordset.length === 0) {
+        throw new Error("Tarif configuration not found");
+    }
+
+    const tariff = tariffResult.recordset[0];
+
+    const minPricePerKM = Number(tariff.min_price_perKM);
+    const maxPricePerKM = Number(tariff.max_price_perKM);
+
+    if (
+        !Number.isFinite(minPricePerKM) ||
+        !Number.isFinite(maxPricePerKM)
+    ) {
+        throw new Error("Invalid tariff configuration");
+    }
+
+    // Calculate allowed total-price range for this ride
+    const minimumPrice = minPricePerKM * rideDistance;
+    const maximumPrice = maxPricePerKM * rideDistance;
+
+    // Validate driver's chosen price
+    if (
+        ridePrice < minimumPrice ||
+        ridePrice > maximumPrice
+    ) {
+        throw new Error(
+            `prix_total must be between ${minimumPrice.toFixed(2)} DA and ${maximumPrice.toFixed(2)} DA`
+        );
+    }
 
     // Create the ride
     const result = await pool
@@ -23,29 +87,32 @@ const createRide = async ({
         .input("id_adresse_start", id_adresse_start)
         .input("id_adresse_arrive", id_adresse_arrive)
         .input("departure_time", departure_time)
-        .input("distance", distance)
+        .input("distance", rideDistance)
+        .input("prix_total", ridePrice)
         .input("empty_seats", empty_seats)
         .query(`
             INSERT INTO RIDE
             (
+                prix_total,
+                distance,
+                empty_seats,
+                departure_time,
                 id_driver_posted,
                 id_vehicile,
                 id_adresse_start,
-                id_adresse_arrive,
-                departure_time,
-                distance,
-                empty_seats
+                id_adresse_arrive
             )
             OUTPUT INSERTED.*
             VALUES
             (
+                @prix_total,
+                @distance,
+                @empty_seats,
+                @departure_time,
                 @id_driver_posted,
                 @id_vehicile,
                 @id_adresse_start,
-                @id_adresse_arrive,
-                @departure_time,
-                @distance,
-                @empty_seats
+                @id_adresse_arrive
             )
         `);
 
@@ -376,95 +443,84 @@ const startRide = async ({ id_ride, id_driver }) => {
 
 const updateRideLocation = async ({
     id_ride,
-    id_driver,
     latitude,
     longitude
 }) => {
-
     const pool = getPool();
 
-    // Validate GPS coordinates
-    const driverLatitude = Number(latitude);
-    const driverLongitude = Number(longitude);
+    const lat = Number(latitude);
+    const lon = Number(longitude);
 
     if (
-        !Number.isFinite(driverLatitude) ||
-        !Number.isFinite(driverLongitude)
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon) ||
+        lat < -90 ||
+        lat > 90 ||
+        lon < -180 ||
+        lon > 180
     ) {
-        throw new Error("Latitude and longitude must be valid numbers");
+        throw new Error("Invalid GPS coordinates");
     }
 
-    if (
-        driverLatitude < -90 ||
-        driverLatitude > 90
-    ) {
-        throw new Error("Latitude must be between -90 and 90");
-    }
-
-    if (
-        driverLongitude < -180 ||
-        driverLongitude > 180
-    ) {
-        throw new Error("Longitude must be between -180 and 180");
-    }
-
-    // Get the ride and its destination coordinates
-    const result = await pool
+    // Get ride destination and current status
+    const rideResult = await pool
         .request()
-        .input("id_ride", id_ride)
-        .input("id_driver", id_driver)
+        .input("id_ride", sql.Int, id_ride)
         .query(`
             SELECT
-                r.id_ride,
-                r.id_driver_posted,
-                r.status_ride,
-                r.prix_total,
-                r.commission,
-                r.id_adresse_arrive,
-                a.latitude AS destination_latitude,
-                a.longitude AS destination_longitude
-            FROM RIDE r
-            INNER JOIN ADRESSE a
-                ON r.id_adresse_arrive = a.id_adresse
-            WHERE r.id_ride = @id_ride
-              AND r.id_driver_posted = @id_driver
+                id_ride,
+                id_driver_posted,
+                status_ride,
+                id_adresse_arrive
+            FROM RIDE
+            WHERE id_ride = @id_ride
         `);
 
-    if (result.recordset.length === 0) {
-        throw new Error(
-            "Ride not found or you are not the driver who posted it"
-        );
+    if (rideResult.recordset.length === 0) {
+        throw new Error("Ride not found");
     }
 
-    const ride = result.recordset[0];
+    const ride = rideResult.recordset[0];
 
-    // The ride must already have started
     if (ride.status_ride !== "in_progress") {
         throw new Error("Ride is not in progress");
     }
 
-    const destinationLatitude = Number(ride.destination_latitude);
-    const destinationLongitude = Number(ride.destination_longitude);
+    // Get destination coordinates
+    const destinationResult = await pool
+        .request()
+        .input("id_adresse_arrive", sql.Int, ride.id_adresse_arrive)
+        .query(`
+            SELECT
+                latitude,
+                longitude
+            FROM ADRESSE
+            WHERE id_adresse = @id_adresse_arrive
+        `);
 
-    // Convert degrees to radians
-    const toRadians = (degrees) => {
-        return degrees * Math.PI / 180;
-    };
+    if (destinationResult.recordset.length === 0) {
+        throw new Error("Destination address not found");
+    }
+
+    const destination = destinationResult.recordset[0];
+
+    const destinationLat = Number(destination.latitude);
+    const destinationLon = Number(destination.longitude);
 
     // Haversine formula
-    const R = 6371000;
+    const earthRadius = 6371000;
 
-    const latDifference =
-        toRadians(destinationLatitude - driverLatitude);
+    const toRadians = (degrees) =>
+        degrees * (Math.PI / 180);
 
-    const lonDifference =
-        toRadians(destinationLongitude - driverLongitude);
+    const dLat = toRadians(destinationLat - lat);
+    const dLon = toRadians(destinationLon - lon);
 
     const a =
-        Math.sin(latDifference / 2) ** 2 +
-        Math.cos(toRadians(driverLatitude)) *
-        Math.cos(toRadians(destinationLatitude)) *
-        Math.sin(lonDifference / 2) ** 2;
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRadians(lat)) *
+        Math.cos(toRadians(destinationLat)) *
+        Math.sin(dLon / 2) ** 2;
 
     const c =
         2 * Math.atan2(
@@ -472,116 +528,137 @@ const updateRideLocation = async ({
             Math.sqrt(1 - a)
         );
 
-    const distance = R * c;
+    const distanceToDestination = earthRadius * c;
 
-    // Arrival radius = 100 meters
-    const ARRIVAL_RADIUS = 100;
-
-    // Driver has not reached destination yet
-    if (distance > ARRIVAL_RADIUS) {
+    // Driver is considered to have reached destination
+    // when within 100 meters.
+    if (distanceToDestination > 100) {
         return {
-            ride,
-            distance_meters: Math.round(distance),
-            completed: false
+            completed: false,
+            distanceToDestination
         };
     }
 
-    /*
-     * DRIVER REACHED DESTINATION
-     *
-     * Everything below happens inside ONE transaction:
-     *
-     * 1. Get commission percentage
-     * 2. Calculate commission
-     * 3. Lock driver's wallet
-     * 4. Deduct commission
-     * 5. Record wallet transaction
-     * 6. Store commission in RIDE
-     * 7. Mark ride as completed
-     */
+    // --------------------------------------------------
+    // Completion transaction
+    // --------------------------------------------------
 
     const transaction = new sql.Transaction(pool);
 
     try {
-
         await transaction.begin();
 
-        // 1. Get the current ride and lock it
-        const rideResult = await new sql.Request(transaction)
-            .input("id_ride", id_ride)
-            .input("id_driver", id_driver)
+        // Lock the ride so two simultaneous requests
+        // cannot complete and charge it twice.
+        const lockedRideResult = await new sql.Request(transaction)
+            .input("id_ride", sql.Int, id_ride)
             .query(`
                 SELECT
                     id_ride,
                     id_driver_posted,
-                    status_ride,
                     prix_total,
-                    commission
+                    status_ride
                 FROM RIDE WITH (UPDLOCK, HOLDLOCK)
                 WHERE id_ride = @id_ride
-                  AND id_driver_posted = @id_driver
             `);
 
-        if (rideResult.recordset.length === 0) {
-            throw new Error(
-                "Ride not found or you are not the driver who posted it"
-            );
+        if (lockedRideResult.recordset.length === 0) {
+            throw new Error("Ride not found");
         }
 
-        const currentRide = rideResult.recordset[0];
+        const lockedRide = lockedRideResult.recordset[0];
 
-        // Prevent duplicate completion / commission
-        if (currentRide.status_ride !== "in_progress") {
+        // Another request may have completed the ride
+        // while this request was running.
+        if (lockedRide.status_ride === "completed") {
+            await transaction.rollback();
+
+            return {
+                completed: true,
+                alreadyCompleted: true
+            };
+        }
+
+        if (lockedRide.status_ride !== "in_progress") {
             throw new Error("Ride is no longer in progress");
         }
 
-        // 2. Get commission percentage
-        const configResult = await new sql.Request(transaction)
+        // --------------------------------------------------
+        // Count approved passengers
+        // --------------------------------------------------
+
+        const passengersResult = await new sql.Request(transaction)
+            .input("id_ride", sql.Int, id_ride)
             .query(`
-                SELECT TOP 1
-                    commission_percentage
-                FROM TARIF_CONFIGURATION
+                SELECT COUNT(*) AS number_of_passengers
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride = @id_ride
+                  AND status = 'approved'
             `);
 
-        if (configResult.recordset.length === 0) {
+        const numberOfPassengers = Number(
+            passengersResult.recordset[0].number_of_passengers
+        );
+
+        if (numberOfPassengers <= 0) {
             throw new Error(
-                "Tarif configuration not found"
+                "Cannot complete a ride with no approved passengers"
             );
         }
 
-        const commissionPercentage =
-            Number(configResult.recordset[0].commission_percentage);
+        // --------------------------------------------------
+        // Get current commission percentage
+        // --------------------------------------------------
 
-        const prixTotal = Number(currentRide.prix_total);
+        const tariffResult = await new sql.Request(transaction)
+            .query(`
+                SELECT TOP 1
+                    commision_percentage
+                FROM TARIF_CONFIGURATION
+                ORDER BY updated_at DESC
+            `);
 
-        if (!Number.isFinite(prixTotal) || prixTotal < 0) {
-            throw new Error(
-                "Invalid ride price"
-            );
+        if (tariffResult.recordset.length === 0) {
+            throw new Error("Tarif configuration not found");
         }
+
+        const commissionPercentage = Number(
+            tariffResult.recordset[0].commision_percentage
+        );
 
         if (
             !Number.isFinite(commissionPercentage) ||
             commissionPercentage < 0
         ) {
-            throw new Error(
-                "Invalid commission percentage"
-            );
+            throw new Error("Invalid commission configuration");
         }
 
-        // 3. Calculate commission
-        const commission =
-            prixTotal * commissionPercentage / 100;
+        // --------------------------------------------------
+        // Calculate commission
+        // --------------------------------------------------
 
-        // 4. Get and lock driver's wallet
+        const ridePrice = Number(lockedRide.prix_total);
+
+        const commission =
+            (ridePrice * commissionPercentage / 100) *
+            numberOfPassengers;
+
+        // --------------------------------------------------
+        // Lock driver's wallet
+        // --------------------------------------------------
+
         const walletResult = await new sql.Request(transaction)
-            .input("id_driver", id_driver)
+            .input(
+                "id_driver_posted",
+                sql.Int,
+                lockedRide.id_driver_posted
+            )
             .query(`
                 SELECT
                     id_wallet,
                     balance
                 FROM WALLET WITH (UPDLOCK, HOLDLOCK)
-                WHERE id_user = @id_driver
+                WHERE id_user = @id_driver_posted
             `);
 
         if (walletResult.recordset.length === 0) {
@@ -592,62 +669,61 @@ const updateRideLocation = async ({
 
         const currentBalance = Number(wallet.balance);
 
-        if (!Number.isFinite(currentBalance)) {
-            throw new Error("Invalid driver wallet balance");
-        }
-
-        // 5. Make sure the commission can be deducted
-        if (commission > currentBalance) {
+        if (currentBalance < commission) {
             throw new Error(
-                "Driver wallet balance is insufficient to pay the commission"
+                `Insufficient driver wallet balance for commission. Required: ${commission.toFixed(2)} DA`
             );
         }
 
-        const newBalance = currentBalance - commission;
+        // --------------------------------------------------
+        // Deduct commission
+        // --------------------------------------------------
 
-        // 6. Deduct commission from driver's wallet
         await new sql.Request(transaction)
             .input("id_wallet", sql.Int, wallet.id_wallet)
-            .input("new_balance", newBalance)
+            .input("commission", sql.Decimal(10, 2), commission)
             .query(`
                 UPDATE WALLET
-                SET balance = @new_balance
+                SET balance = balance - @commission
                 WHERE id_wallet = @id_wallet
             `);
 
-        // 7. Record the commission transaction
+        // --------------------------------------------------
+        // Record commission transaction
+        // --------------------------------------------------
+
         await new sql.Request(transaction)
-            .input("type", sql.NVarChar, "debit")
-            .input("amount", commission)
-            .input("balance_after", newBalance)
-            .input("transaction_reason", sql.NVarChar, "commission")
             .input("id_wallet", sql.Int, wallet.id_wallet)
+            .input("amount", sql.Decimal(10, 2), commission)
             .input("id_ride", sql.Int, id_ride)
             .query(`
                 INSERT INTO WALLET_TRANSACTION
                 (
-                    type,
-                    amount,
-                    balance_after,
-                    transaction_reason,
                     id_wallet,
-                    id_ride
+                    amount,
+                    transaction_type,
+                    reason,
+                    id_ride,
+                    creation_date
                 )
                 VALUES
                 (
-                    @type,
-                    @amount,
-                    @balance_after,
-                    @transaction_reason,
                     @id_wallet,
-                    @id_ride
+                    -@amount,
+                    'debit',
+                    'commission',
+                    @id_ride,
+                    GETDATE()
                 )
             `);
 
-        // 8. Store commission and complete the ride
-        const completedResult = await new sql.Request(transaction)
-            .input("id_ride", id_ride)
-            .input("commission", commission)
+        // --------------------------------------------------
+        // Complete ride
+        // --------------------------------------------------
+
+        await new sql.Request(transaction)
+            .input("id_ride", sql.Int, id_ride)
+            .input("commission", sql.Decimal(10, 2), commission)
             .query(`
                 UPDATE RIDE
                 SET
@@ -655,38 +731,25 @@ const updateRideLocation = async ({
                     status_ride = 'completed',
                     is_available = 0
                 WHERE id_ride = @id_ride
-                  AND status_ride = 'in_progress';
-
-                SELECT *
-                FROM RIDE
-                WHERE id_ride = @id_ride;
+                  AND status_ride = 'in_progress'
             `);
-
-        if (completedResult.recordset.length === 0) {
-            throw new Error(
-                "Failed to complete ride"
-            );
-        }
 
         await transaction.commit();
 
         return {
-            ride: completedResult.recordset[0],
-            distance_meters: Math.round(distance),
             completed: true,
+            alreadyCompleted: false,
+            numberOfPassengers,
+            ridePrice,
             commission,
-            driver_wallet_balance: newBalance
+            distanceToDestination
         };
 
     } catch (error) {
-
         try {
             await transaction.rollback();
         } catch (rollbackError) {
-            console.error(
-                "COMMISSION ROLLBACK ERROR:",
-                rollbackError
-            );
+            // Ignore rollback errors
         }
 
         throw error;

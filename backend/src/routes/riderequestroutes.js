@@ -3,10 +3,11 @@ const express = require("express");
 const {
     createRideRequestController,
     getRideRequestsController,
-    createOpenRideRequestController,
     approveRideRequestController,
     rejectRideRequestController,
-    cancelRideRequestController
+    cancelRideRequestController,
+    updatePaymentMethodController,
+    payRideRequestController
 } = require("../controllers/rideRequestController");
 
 const {
@@ -19,12 +20,24 @@ const {
 
 const router = express.Router();
 
+
+// ============================================================
+// PASSENGER REQUESTS TO JOIN AN EXISTING RIDE
+// POST /api/rides/:id/request
+// ============================================================
+
 router.post(
     "/:id/request",
     authenticateToken,
     authorizeRoles("passenger"),
     createRideRequestController
 );
+
+
+// ============================================================
+// DRIVER GETS REQUESTS FOR HIS RIDE
+// GET /api/rides/:id/requests
+// ============================================================
 
 router.get(
     "/:id/requests",
@@ -33,12 +46,11 @@ router.get(
     getRideRequestsController
 );
 
-router.post(
-    "/",
-    authenticateToken,
-    authorizeRoles("passenger"),
-    createOpenRideRequestController
-);
+
+// ============================================================
+// DRIVER APPROVES RIDE REQUEST
+// PATCH /api/rides/requests/:id/approve
+// ============================================================
 
 router.patch(
     "/requests/:id/approve",
@@ -47,6 +59,12 @@ router.patch(
     approveRideRequestController
 );
 
+
+// ============================================================
+// DRIVER REJECTS RIDE REQUEST
+// PATCH /api/rides/requests/:id/reject
+// ============================================================
+
 router.patch(
     "/requests/:id/reject",
     authenticateToken,
@@ -54,11 +72,37 @@ router.patch(
     rejectRideRequestController
 );
 
+
+// ============================================================
+// PASSENGER CANCELS RIDE REQUEST
+// PATCH /api/rides/requests/:id/cancel
+// ============================================================
+
 router.patch(
     "/requests/:id/cancel",
     authenticateToken,
     authorizeRoles("passenger"),
     cancelRideRequestController
+);
+
+
+// ============================================================
+// PASSENGER UPDATES PAYMENT METHOD
+// PATCH /api/rides/:id/payment-method
+// ============================================================
+
+router.patch(
+    "/:id/payment-method",
+    authenticateToken,
+    authorizeRoles("passenger"),
+    updatePaymentMethodController
+);
+// passanger pays for the ride 
+router.patch(
+    "/:id/pay",
+    authenticateToken,
+    authorizeRoles("passenger"),
+    payRideRequestController
 );
 
 

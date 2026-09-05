@@ -17,24 +17,25 @@ const createRideController = async (req, res) => {
             id_adresse_arrive,
             departure_time,
             distance,
+            prix_total,
             empty_seats
         } = req.body;
 
-        // Check required fields
+        const id_driver_posted = req.user.id_user;
+
         if (
-            !id_vehicile ||
-            !id_adresse_start ||
-            !id_adresse_arrive ||
-            !departure_time ||
+            id_vehicile === undefined ||
+            id_adresse_start === undefined ||
+            id_adresse_arrive === undefined ||
+            departure_time === undefined ||
+            distance === undefined ||
+            prix_total === undefined ||
             empty_seats === undefined
         ) {
             return res.status(400).json({
-                message: "Required fields are missing"
+                message: "All ride fields are required"
             });
         }
-
-        // Driver comes from JWT
-        const id_driver_posted = req.user.id_user;
 
         const ride = await createRide({
             id_driver_posted,
@@ -43,21 +44,21 @@ const createRideController = async (req, res) => {
             id_adresse_arrive,
             departure_time,
             distance,
+            prix_total,
             empty_seats
         });
 
-        res.status(201).json({
+        return res.status(201).json({
             message: "Ride created successfully",
             ride
         });
 
     } catch (error) {
-    console.error("CREATE RIDE ERROR:", error);
+        console.error("CREATE RIDE ERROR:", error);
 
-    res.status(500).json({
-        message: "Failed to create ride",
-        error: error.message
-    });
+        return res.status(400).json({
+            message: error.message
+        });
     }
 };
 
@@ -113,7 +114,6 @@ const getRideByIdController = async (req, res) => {
 
 const updateRideController = async (req, res) => {
     try {
-
         const { id } = req.params;
 
         const {
@@ -125,11 +125,13 @@ const updateRideController = async (req, res) => {
             empty_seats
         } = req.body;
 
+        // Validate required fields BEFORE updating the database
         if (
-            !id_vehicile ||
-            !id_adresse_start ||
-            !id_adresse_arrive ||
-            !departure_time ||
+            id_vehicile === undefined ||
+            id_adresse_start === undefined ||
+            id_adresse_arrive === undefined ||
+            departure_time === undefined ||
+            distance === undefined ||
             empty_seats === undefined
         ) {
             return res.status(400).json({
@@ -157,16 +159,15 @@ const updateRideController = async (req, res) => {
             });
         }
 
-        res.status(200).json({
+        return res.status(200).json({
             message: "Ride updated successfully",
             ride
         });
 
     } catch (error) {
-
         console.error("UPDATE RIDE ERROR:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             message: "Failed to update ride",
             error: error.message
         });
