@@ -8,6 +8,8 @@ const testRoutes = require("./routes/testRoutes");
 const rideRoutes = require("./routes/rideRoutes");
 const rideRequestRoutes = require("./routes/riderequestroutes");
 const openRideRequestRoutes = require("./routes/openRideRequestRoutes");
+const walletRoutes = require("./routes/walletRoutes");
+const rechargeRoutes = require("./routes/rechargeRoutes");
 
 const app = express();
 
@@ -28,7 +30,8 @@ app.use("/api/test", testRoutes);
 app.use("/api/rides", rideRoutes);
 app.use("/api/rides", rideRequestRoutes);
 app.use("/api/ride-requests", openRideRequestRoutes);
-
+app.use("/api/wallet", walletRoutes);
+app.use("/api/wallet/recharge", rechargeRoutes);
 connectDB();
 
 app.listen(PORT, () => {

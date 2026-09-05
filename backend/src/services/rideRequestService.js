@@ -232,6 +232,38 @@ const acceptOpenRideRequest = async ({
 
         const id_vehicile = vehicleResult.recordset[0].id_vehicile;
 
+        // Check driver's wallet minimum balance
+        const walletResult = await transaction
+            .request()
+            .input("id_driver", id_driver)
+            .query(`
+                SELECT
+                    w.balance,
+                    tc.min_balance_toride
+                FROM WALLET w
+                CROSS JOIN (
+                    SELECT TOP 1 min_balance_toride
+                    FROM TARIF_CONFIGURATION
+                ) tc
+                WHERE w.id_user = @id_driver
+            `);
+        
+        if (walletResult.recordset.length === 0) {
+            throw new Error("Driver wallet not found");
+        }
+        
+        const driverBalance =
+            Number(walletResult.recordset[0].balance);
+        
+        const minimumBalance =
+            Number(walletResult.recordset[0].min_balance_toride);
+        
+        if (driverBalance < minimumBalance) {
+            throw new Error(
+                `Driver must have at least ${minimumBalance} DA in wallet to accept an open ride request`
+            );
+        }
+
         // STEP 5 — Create the new ride
         const rideResult = await transaction
             .request()
@@ -428,6 +460,37 @@ const approveRideRequest = async ({ id_ride_request, id_driver }) => {
         if (request.empty_seats < request.seats_needed) {
             throw new Error(
                 "Not enough available seats"
+            );
+        }
+
+                // Check driver's wallet minimum balance
+        const walletResult = await new sql.Request(transaction)
+            .input("id_driver", id_driver)
+            .query(`
+                SELECT
+                    w.balance,
+                    tc.min_balance_toride
+                FROM WALLET w
+                CROSS JOIN (
+                    SELECT TOP 1 min_balance_toride
+                    FROM TARIF_CONFIGURATION
+                ) tc
+                WHERE w.id_user = @id_driver
+            `);
+        
+        if (walletResult.recordset.length === 0) {
+            throw new Error("Driver wallet not found");
+        }
+        
+        const driverBalance =
+            Number(walletResult.recordset[0].balance);
+        
+        const minimumBalance =
+            Number(walletResult.recordset[0].min_balance_toride);
+        
+        if (driverBalance < minimumBalance) {
+            throw new Error(
+                `Driver must have at least ${minimumBalance} DA in wallet to accept a ride request`
             );
         }
 
