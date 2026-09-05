@@ -13,6 +13,48 @@ const createRide = async ({
 
     const pool = getPool();
 
+    // Get the minimum balance required to post/accept a ride
+    const configResult = await pool
+        .request()
+        .query(`
+            SELECT TOP 1
+                min_balance_toride
+            FROM TARIF_CONFIGURATION
+        `);
+
+    if (configResult.recordset.length === 0) {
+        throw new Error("Tarif configuration not found");
+    }
+
+    const minimumBalance =
+        Number(configResult.recordset[0].min_balance_toride);
+
+    // Get driver's wallet
+    const walletResult = await pool
+        .request()
+        .input("id_driver", id_driver_posted)
+        .query(`
+            SELECT
+                id_wallet,
+                balance
+            FROM WALLET
+            WHERE id_user = @id_driver
+        `);
+
+    if (walletResult.recordset.length === 0) {
+        throw new Error("Driver wallet not found");
+    }
+
+    const balance = Number(walletResult.recordset[0].balance);
+
+    // Enforce minimum wallet balance
+    if (balance < minimumBalance) {
+        throw new Error(
+            `Driver must have at least ${minimumBalance} DA in wallet to post a ride`
+        );
+    }
+
+    // Create the ride
     const result = await pool
         .request()
         .input("id_driver_posted", id_driver_posted)
@@ -415,6 +457,8 @@ const updateRideLocation = async ({
                 r.id_ride,
                 r.id_driver_posted,
                 r.status_ride,
+                r.prix_total,
+                r.commission,
                 r.id_adresse_arrive,
                 a.latitude AS destination_latitude,
                 a.longitude AS destination_longitude
@@ -472,14 +516,183 @@ const updateRideLocation = async ({
     // Arrival radius = 100 meters
     const ARRIVAL_RADIUS = 100;
 
-    if (distance <= ARRIVAL_RADIUS) {
+    // Driver has not reached destination yet
+    if (distance > ARRIVAL_RADIUS) {
+        return {
+            ride,
+            distance_meters: Math.round(distance),
+            completed: false
+        };
+    }
 
-        const completedResult = await pool
-            .request()
+    /*
+     * DRIVER REACHED DESTINATION
+     *
+     * Everything below happens inside ONE transaction:
+     *
+     * 1. Get commission percentage
+     * 2. Calculate commission
+     * 3. Lock driver's wallet
+     * 4. Deduct commission
+     * 5. Record wallet transaction
+     * 6. Store commission in RIDE
+     * 7. Mark ride as completed
+     */
+
+    const transaction = new sql.Transaction(pool);
+
+    try {
+
+        await transaction.begin();
+
+        // 1. Get the current ride and lock it
+        const rideResult = await new sql.Request(transaction)
             .input("id_ride", id_ride)
+            .input("id_driver", id_driver)
+            .query(`
+                SELECT
+                    id_ride,
+                    id_driver_posted,
+                    status_ride,
+                    prix_total,
+                    commission
+                FROM RIDE WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride = @id_ride
+                  AND id_driver_posted = @id_driver
+            `);
+
+        if (rideResult.recordset.length === 0) {
+            throw new Error(
+                "Ride not found or you are not the driver who posted it"
+            );
+        }
+
+        const currentRide = rideResult.recordset[0];
+
+        // Prevent duplicate completion / commission
+        if (currentRide.status_ride !== "in_progress") {
+            throw new Error("Ride is no longer in progress");
+        }
+
+        // 2. Get commission percentage
+        const configResult = await new sql.Request(transaction)
+            .query(`
+                SELECT TOP 1
+                    commission_percentage
+                FROM TARIF_CONFIGURATION
+            `);
+
+        if (configResult.recordset.length === 0) {
+            throw new Error(
+                "Tarif configuration not found"
+            );
+        }
+
+        const commissionPercentage =
+            Number(configResult.recordset[0].commission_percentage);
+
+        const prixTotal = Number(currentRide.prix_total);
+
+        if (!Number.isFinite(prixTotal) || prixTotal < 0) {
+            throw new Error(
+                "Invalid ride price"
+            );
+        }
+
+        if (
+            !Number.isFinite(commissionPercentage) ||
+            commissionPercentage < 0
+        ) {
+            throw new Error(
+                "Invalid commission percentage"
+            );
+        }
+
+        // 3. Calculate commission
+        const commission =
+            prixTotal * commissionPercentage / 100;
+
+        // 4. Get and lock driver's wallet
+        const walletResult = await new sql.Request(transaction)
+            .input("id_driver", id_driver)
+            .query(`
+                SELECT
+                    id_wallet,
+                    balance
+                FROM WALLET WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_user = @id_driver
+            `);
+
+        if (walletResult.recordset.length === 0) {
+            throw new Error("Driver wallet not found");
+        }
+
+        const wallet = walletResult.recordset[0];
+
+        const currentBalance = Number(wallet.balance);
+
+        if (!Number.isFinite(currentBalance)) {
+            throw new Error("Invalid driver wallet balance");
+        }
+
+        // 5. Make sure the commission can be deducted
+        if (commission > currentBalance) {
+            throw new Error(
+                "Driver wallet balance is insufficient to pay the commission"
+            );
+        }
+
+        const newBalance = currentBalance - commission;
+
+        // 6. Deduct commission from driver's wallet
+        await new sql.Request(transaction)
+            .input("id_wallet", sql.Int, wallet.id_wallet)
+            .input("new_balance", newBalance)
+            .query(`
+                UPDATE WALLET
+                SET balance = @new_balance
+                WHERE id_wallet = @id_wallet
+            `);
+
+        // 7. Record the commission transaction
+        await new sql.Request(transaction)
+            .input("type", sql.NVarChar, "debit")
+            .input("amount", commission)
+            .input("balance_after", newBalance)
+            .input("transaction_reason", sql.NVarChar, "commission")
+            .input("id_wallet", sql.Int, wallet.id_wallet)
+            .input("id_ride", sql.Int, id_ride)
+            .query(`
+                INSERT INTO WALLET_TRANSACTION
+                (
+                    type,
+                    amount,
+                    balance_after,
+                    transaction_reason,
+                    id_wallet,
+                    id_ride
+                )
+                VALUES
+                (
+                    @type,
+                    @amount,
+                    @balance_after,
+                    @transaction_reason,
+                    @id_wallet,
+                    @id_ride
+                )
+            `);
+
+        // 8. Store commission and complete the ride
+        const completedResult = await new sql.Request(transaction)
+            .input("id_ride", id_ride)
+            .input("commission", commission)
             .query(`
                 UPDATE RIDE
-                SET status_ride = 'completed'
+                SET
+                    commission = @commission,
+                    status_ride = 'completed',
+                    is_available = 0
                 WHERE id_ride = @id_ride
                   AND status_ride = 'in_progress';
 
@@ -488,18 +701,35 @@ const updateRideLocation = async ({
                 WHERE id_ride = @id_ride;
             `);
 
+        if (completedResult.recordset.length === 0) {
+            throw new Error(
+                "Failed to complete ride"
+            );
+        }
+
+        await transaction.commit();
+
         return {
             ride: completedResult.recordset[0],
             distance_meters: Math.round(distance),
-            completed: true
+            completed: true,
+            commission,
+            driver_wallet_balance: newBalance
         };
-    }
 
-    return {
-        ride,
-        distance_meters: Math.round(distance),
-        completed: false
-    };
+    } catch (error) {
+
+        try {
+            await transaction.rollback();
+        } catch (rollbackError) {
+            console.error(
+                "COMMISSION ROLLBACK ERROR:",
+                rollbackError
+            );
+        }
+
+        throw error;
+    }
 };
 
 module.exports = {

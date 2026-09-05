@@ -1,0 +1,47 @@
+const express = require("express");
+
+const {
+    createRechargeController,
+    getRechargeRequestController,
+    getMyRechargeRequestsController
+} = require("../controllers/rechargeController");
+
+const {
+    authenticateToken
+} = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+
+/*
+    Get all recharge requests
+    of the authenticated user.
+*/
+router.get(
+    "/",
+    authenticateToken,
+    getMyRechargeRequestsController
+);
+
+
+/*
+    Create a recharge request.
+*/
+router.post(
+    "/",
+    authenticateToken,
+    createRechargeController
+);
+
+
+/*
+    Get one recharge request.
+*/
+router.get(
+    "/:id",
+    authenticateToken,
+    getRechargeRequestController
+);
+
+
+module.exports = router;
