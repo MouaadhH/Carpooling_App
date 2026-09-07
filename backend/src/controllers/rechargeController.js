@@ -1,7 +1,8 @@
 const {
     createRechargeRequest,
     getRechargeRequest,
-    getMyRechargeRequests
+    getMyRechargeRequests,
+    approveRecharge,
 } = require("../services/rechargeService");
 
 
@@ -110,9 +111,39 @@ const getMyRechargeRequestsController = async (req, res) => {
     }
 };
 
+const approveRechargeController = async (req, res) => {
+    try {
+        const id_request_recharge = Number(req.params.id);
+        const id_admin = req.user.id_user;
+
+        if (!Number.isInteger(id_request_recharge)) {
+            return res.status(400).json({
+                message: "Invalid recharge request ID"
+            });
+        }
+
+        const result = await approveRecharge({
+            id_request_recharge,
+            id_admin
+        });
+
+        return res.status(200).json({
+            message: "Recharge request approved successfully",
+            recharge: result
+        });
+
+    } catch (error) {
+        console.error("APPROVE RECHARGE ERROR:", error);
+
+        return res.status(400).json({
+            message: error.message
+        });
+    }
+};
 
 module.exports = {
     createRechargeController,
     getRechargeRequestController,
-    getMyRechargeRequestsController
+    getMyRechargeRequestsController,
+    approveRechargeController
 };

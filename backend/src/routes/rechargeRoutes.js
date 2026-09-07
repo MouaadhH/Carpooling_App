@@ -1,14 +1,19 @@
 const express = require("express");
 
+
 const {
     createRechargeController,
     getRechargeRequestController,
-    getMyRechargeRequestsController
+    getMyRechargeRequestsController,
+    approveRechargeController
 } = require("../controllers/rechargeController");
 
 const {
     authenticateToken
 } = require("../middleware/authMiddleware");
+const {
+    authorizeRoles
+} = require("../middleware/roleMiddleware");
 
 const router = express.Router();
 
@@ -41,6 +46,13 @@ router.get(
     "/:id",
     authenticateToken,
     getRechargeRequestController
+);
+
+router.patch(
+    "/:id/approve",
+    authenticateToken,
+    authorizeRoles("admin"),
+    approveRechargeController
 );
 
 
