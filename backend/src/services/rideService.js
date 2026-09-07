@@ -90,31 +90,34 @@ const createRide = async ({
         .input("distance", rideDistance)
         .input("prix_total", ridePrice)
         .input("empty_seats", empty_seats)
-        .query(`
-            INSERT INTO RIDE
-            (
-                prix_total,
-                distance,
-                empty_seats,
-                departure_time,
-                id_driver_posted,
-                id_vehicile,
-                id_adresse_start,
-                id_adresse_arrive
-            )
-            OUTPUT INSERTED.*
-            VALUES
-            (
-                @prix_total,
-                @distance,
-                @empty_seats,
-                @departure_time,
-                @id_driver_posted,
-                @id_vehicile,
-                @id_adresse_start,
-                @id_adresse_arrive
-            )
-        `);
+    .query(`
+        INSERT INTO RIDE
+        (
+            prix_total,
+            distance,
+            empty_seats,
+            departure_time,
+            id_driver_posted,
+            id_vehicile,
+            id_adresse_start,
+            id_adresse_arrive
+        )
+        VALUES
+        (
+            @prix_total,
+            @distance,
+            @empty_seats,
+            @departure_time,
+            @id_driver_posted,
+            @id_vehicile,
+            @id_adresse_start,
+            @id_adresse_arrive
+        );
+    
+        SELECT *
+        FROM RIDE
+        WHERE id_ride = SCOPE_IDENTITY();
+    `);
 
     return result.recordset[0];
 };
