@@ -48,7 +48,7 @@ const registerUser = async (
         email_u,
         password_u,
         role,
-        prefered_lang
+        preferred_lang
     )
     OUTPUT INSERTED.id_user
     VALUES
@@ -79,7 +79,7 @@ const loginUser = async (email, password) => {
                 email_u,
                 password_u,
                 role,
-                prefered_lang
+                preferred_lang
             FROM [USER]
             WHERE email_u = @email
         `);
@@ -116,7 +116,7 @@ const loginUser = async (email, password) => {
         email: user.email_u,
         phone: user.phone_u,
         role: user.role,
-        prefered_lang: user.prefered_lang,
+        preferred_lang: user.preferred_lang,
         token
     };
 };

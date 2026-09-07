@@ -1,7 +1,8 @@
 const sql = require("mssql/msnodesqlv8");
 
 const config = {
-    server: "SILVER\\SQLEXPRESS",
+    server: "localhost",
+    port: 1433,
     database: "Wassalni",
     driver: "ODBC Driver 18 for SQL Server",
     options: {
