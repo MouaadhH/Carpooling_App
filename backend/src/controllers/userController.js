@@ -14,7 +14,7 @@ const getMe = async (req, res) => {
                     phone_u,
                     email_u,
                     role,
-                    prefered_lang,
+                    preferred_lang,
                     is_phone_verified,
                     creation_date_u
                 FROM [USER]

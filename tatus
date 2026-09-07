@@ -1,0 +1,10 @@
+[33m0ec3814[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmoad_dev[m[33m, [m[1;31morigin/moad_dev[m[33m)[m payment/wallet implementation finished
+[33m1f48a60[m erase duplicate code of check minimum balance for the driver in create ride approve request and approve open request
+[33m6733ae2[m wallet creation and retrieval , commision deduction in rideService , verify driver's balance  before approve/create rides
+[33mf516d26[m error handeling conditions added to rideavailabilty
+[33m1b40712[m ride completion logic exceeded
+[33m424efba[m a passanger can cancel his own 'pending' ride request
+[33mce8718a[m cancel checked
+[33m938e182[m ride cancelating updates
+[33m142160a[m in_progress ride status added successfully
+[33m5bf5b6a[m adding is available attribute in ride

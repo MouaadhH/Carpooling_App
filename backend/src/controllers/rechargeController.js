@@ -1,12 +1,11 @@
 const {
     createRechargeRequest,
     getRechargeRequest,
-    getMyRechargeRequests
+    getMyRechargeRequests,
+    approveRecharge,
+    rejectRecharge
 } = require("../services/rechargeService");
-
-
-/*
-    Create a recharge request.
+/*Create a recharge request.
 
     POST /api/wallet/recharge
 */
@@ -109,10 +108,64 @@ const getMyRechargeRequestsController = async (req, res) => {
         });
     }
 };
+/*
+    Approve a recharge request.
 
+    PATCH /api/wallet/recharge/:id/approve
+*/
+const approveRechargeController = async (req, res) => {
+    try {
+        const id_request_recharge = req.params.id;
 
+        const result = await approveRecharge({
+            id_request_recharge
+        });
+
+        res.status(200).json({
+            message: "Recharge approved successfully",
+            recharge: result
+        });
+
+    } catch (error) {
+        console.error("APPROVE RECHARGE ERROR:", error);
+
+        res.status(400).json({
+            message: "Failed to approve recharge",
+            error: error.message
+        });
+    }
+};
+/*
+    Reject a recharge request.
+
+    PATCH /api/wallet/recharge/:id/reject
+*/
+const rejectRechargeController = async (req, res) => {
+    try {
+        const id_request_recharge = req.params.id;
+
+        const result = await rejectRecharge({
+            id_request_recharge
+        });
+
+        res.status(200).json({
+            message: "Recharge rejected successfully",
+            recharge: result
+        });
+
+    } catch (error) {
+        console.error("REJECT RECHARGE ERROR:", error);
+
+        res.status(400).json({
+            message: "Failed to reject recharge",
+            error: error.message
+        });
+    }
+};
 module.exports = {
     createRechargeController,
     getRechargeRequestController,
-    getMyRechargeRequestsController
+    getMyRechargeRequestsController,
+    approveRechargeController,
+    rejectRechargeController
 };
