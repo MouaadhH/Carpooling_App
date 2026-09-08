@@ -614,7 +614,7 @@ const updateRideLocation = async ({
             .query(`
                 SELECT TOP 1
                     commision_percentage
-                FROM TARIF_CONFIGURATION
+                FROM dvo.TARIF_CONFIGURATION
                 ORDER BY updated_at DESC
             `);
 

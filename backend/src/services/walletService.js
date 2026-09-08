@@ -233,11 +233,138 @@ const checkMinimumBalance = async (id_user, transaction = null) => {
         minimumBalance
     };
 };
+const transferWalletPayment = async ({
+    transaction,
+    passengerId,
+    driverId,
+    amount,
+    idRide
+}) => {
+    const passengerWalletResult = await new sql.Request(transaction)
+        .input("id_user", sql.Int, passengerId)
+        .query(`
+            SELECT id_wallet, balance
+            FROM WALLET WITH (UPDLOCK, HOLDLOCK)
+            WHERE id_user = @id_user
+        `);
 
-module.exports = {
+    if (passengerWalletResult.recordset.length === 0) {
+        throw new Error("Passenger wallet not found");
+    }
+
+    const passengerWallet = passengerWalletResult.recordset[0];
+
+    const driverWalletResult = await new sql.Request(transaction)
+        .input("id_user", sql.Int, driverId)
+        .query(`
+            SELECT id_wallet, balance
+            FROM WALLET WITH (UPDLOCK, HOLDLOCK)
+            WHERE id_user = @id_user
+        `);
+
+    if (driverWalletResult.recordset.length === 0) {
+        throw new Error("Driver wallet not found");
+    }
+
+    const driverWallet = driverWalletResult.recordset[0];
+
+    const paymentAmount = Number(amount);
+    const passengerBalance = Number(passengerWallet.balance);
+
+    if (paymentAmount <= 0) {
+        throw new Error("Invalid payment amount");
+    }
+
+    if (passengerBalance < paymentAmount) {
+        throw new Error("Insufficient wallet balance");
+    }
+
+    const newPassengerBalance = passengerBalance - paymentAmount;
+    const newDriverBalance =
+        Number(driverWallet.balance) + paymentAmount;
+
+    // Remove money from passenger wallet
+    await new sql.Request(transaction)
+        .input("id_wallet", sql.Int, passengerWallet.id_wallet)
+        .input("amount", sql.Decimal(10, 2), paymentAmount)
+        .query(`
+            UPDATE WALLET
+            SET balance = balance - @amount
+            WHERE id_wallet = @id_wallet
+        `);
+
+    // Add money to driver wallet
+    await new sql.Request(transaction)
+        .input("id_wallet", sql.Int, driverWallet.id_wallet)
+        .input("amount", sql.Decimal(10, 2), paymentAmount)
+        .query(`
+            UPDATE WALLET
+            SET balance = balance + @amount
+            WHERE id_wallet = @id_wallet
+        `);
+
+    // Passenger transaction
+    await new sql.Request(transaction)
+        .input("type", sql.VarChar, "debit")
+        .input("amount", sql.Decimal(10, 2), paymentAmount)
+        .input("balance_after", sql.Decimal(10, 2), newPassengerBalance)
+        .input("transaction_reason", sql.VarChar, "ride_payment")
+        .input("id_wallet", sql.Int, passengerWallet.id_wallet)
+        .input("id_ride", sql.Int, idRide)
+        .query(`
+            INSERT INTO WALLET_TRANSACTION
+            (
+                type,
+                amount,
+                balance_after,
+                transaction_reason,
+                id_wallet,
+                id_ride
+            )
+            VALUES
+            (
+                @type,
+                @amount,
+                @balance_after,
+                @transaction_reason,
+                @id_wallet,
+                @id_ride
+            )
+        `);
+
+    // Driver transaction
+    await new sql.Request(transaction)
+        .input("type", sql.VarChar, "credit")
+        .input("amount", sql.Decimal(10, 2), paymentAmount)
+        .input("balance_after", sql.Decimal(10, 2), newDriverBalance)
+        .input("transaction_reason", sql.VarChar, "ride_payment")
+        .input("id_wallet", sql.Int, driverWallet.id_wallet)
+        .input("id_ride", sql.Int, idRide)
+        .query(`
+            INSERT INTO WALLET_TRANSACTION
+            (
+                type,
+                amount,
+                balance_after,
+                transaction_reason,
+                id_wallet,
+                id_ride
+            )
+            VALUES
+            (
+                @type,
+                @amount,
+                @balance_after,
+                @transaction_reason,
+                @id_wallet,
+                @id_ride
+            )
+        `);
+};module.exports = {
     getWalletByUserId,
     getWalletTransactions,
     createWallet,
     withdrawFromWallet,
-    checkMinimumBalance
+    checkMinimumBalance,
+    transferWalletPayment
 };

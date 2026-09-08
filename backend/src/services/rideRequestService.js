@@ -1,5 +1,8 @@
 const { getPool, sql } = require("../config/db");
-const { checkMinimumBalance } = require("./walletService");
+const {
+    checkMinimumBalance,
+    transferWalletPayment
+} = require("./walletService");
 const { validateRidePrice } = require("./pricingService");
 
 
@@ -980,17 +983,20 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
             .input("id_ride_request", sql.Int, id_ride_request)
             .query(`
                 SELECT
-                    rr.id_ride_request,
-                    rr.id_user,
-                    rr.id_ride,
-                    rr.status_request,
-                    rr.payment_status,
-                    r.status_ride
+             rr.id_ride_request,
+              rr.id_user,
+              rr.id_ride,
+             rr.status,
+             rr.payment_status,
+            rr.payment_method,
+             r.status_ride,
+            r.prix_total,
+            r.id_driver_posted
                 FROM RIDE_REQUEST rr
                 INNER JOIN RIDE r
                     ON rr.id_ride = r.id_ride
                 WHERE rr.id_ride_request = @id_ride_request
-                WITH (UPDLOCK, HOLDLOCK)
+                
             `);
 
         if (requestResult.recordset.length === 0) {
@@ -1005,7 +1011,7 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
         }
 
         // Only approved requests can be paid
-        if (request.status_request !== "approved") {
+        if (request.status!== "approved") {
             throw new Error("Only an approved ride request can be paid");
         }
 
@@ -1023,7 +1029,20 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
                 "Payment is only allowed when the ride is in progress or completed"
             );
         }
-
+        if (request.payment_method === "baridimob") {
+             throw new Error(
+                  "BaridiMob payment must be verified before marking the ride as paid"
+    );
+}
+        if (request.payment_method === "wallet") {
+    await transferWalletPayment({
+        transaction,
+        passengerId: request.id_user,
+        driverId: request.id_driver_posted,
+        amount: request.prix_total,
+        idRide: request.id_ride
+    });
+}
         // Mark payment as completed
         const updateResult = await transaction.request()
             .input("id_ride_request", sql.Int, id_ride_request)
