@@ -79,7 +79,7 @@ const createRide = async ({
         );
     }
 
-    // Create the ride
+        // Create the ride
     const result = await pool
         .request()
         .input("id_driver_posted", id_driver_posted)
@@ -91,6 +91,22 @@ const createRide = async ({
         .input("prix_total", ridePrice)
         .input("empty_seats", empty_seats)
         .query(`
+            DECLARE @InsertedRide TABLE (
+                id_ride INT,
+                prix_total DECIMAL(10,2),
+                distance DECIMAL(10,2),
+                empty_seats INT,
+                departure_time DATETIME2,
+                status_ride NVARCHAR(20),
+                commission DECIMAL(10,2),
+                creation_date_ride DATETIME2,
+                id_driver_posted INT,
+                id_vehicile INT,
+                id_adresse_start INT,
+                id_adresse_arrive INT,
+                is_available BIT
+            );
+
             INSERT INTO RIDE
             (
                 prix_total,
@@ -102,7 +118,21 @@ const createRide = async ({
                 id_adresse_start,
                 id_adresse_arrive
             )
-            OUTPUT INSERTED.*
+            OUTPUT
+                INSERTED.id_ride,
+                INSERTED.prix_total,
+                INSERTED.distance,
+                INSERTED.empty_seats,
+                INSERTED.departure_time,
+                INSERTED.status_ride,
+                INSERTED.commission,
+                INSERTED.creation_date_ride,
+                INSERTED.id_driver_posted,
+                INSERTED.id_vehicile,
+                INSERTED.id_adresse_start,
+                INSERTED.id_adresse_arrive,
+                INSERTED.is_available
+            INTO @InsertedRide
             VALUES
             (
                 @prix_total,
@@ -113,7 +143,9 @@ const createRide = async ({
                 @id_vehicile,
                 @id_adresse_start,
                 @id_adresse_arrive
-            )
+            );
+
+            SELECT * FROM @InsertedRide;
         `);
 
     return result.recordset[0];
