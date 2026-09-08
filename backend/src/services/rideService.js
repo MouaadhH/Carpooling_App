@@ -90,34 +90,31 @@ const createRide = async ({
         .input("distance", rideDistance)
         .input("prix_total", ridePrice)
         .input("empty_seats", empty_seats)
-    .query(`
-        INSERT INTO RIDE
-        (
-            prix_total,
-            distance,
-            empty_seats,
-            departure_time,
-            id_driver_posted,
-            id_vehicile,
-            id_adresse_start,
-            id_adresse_arrive
-        )
-        VALUES
-        (
-            @prix_total,
-            @distance,
-            @empty_seats,
-            @departure_time,
-            @id_driver_posted,
-            @id_vehicile,
-            @id_adresse_start,
-            @id_adresse_arrive
-        );
-    
-        SELECT *
-        FROM RIDE
-        WHERE id_ride = SCOPE_IDENTITY();
-    `);
+        .query(`
+            INSERT INTO RIDE
+            (
+                prix_total,
+                distance,
+                empty_seats,
+                departure_time,
+                id_driver_posted,
+                id_vehicile,
+                id_adresse_start,
+                id_adresse_arrive
+            )
+            OUTPUT INSERTED.*
+            VALUES
+            (
+                @prix_total,
+                @distance,
+                @empty_seats,
+                @departure_time,
+                @id_driver_posted,
+                @id_vehicile,
+                @id_adresse_start,
+                @id_adresse_arrive
+            )
+        `);
 
     return result.recordset[0];
 };
@@ -322,9 +319,9 @@ const cancelRide = async ({ id_ride, id_driver }) => {
             .input("id_ride", id_ride)
             .query(`
                 UPDATE RIDE_REQUEST
-                SET status = 'cancelled'
+                SET status_request = 'cancelled'
                 WHERE id_ride = @id_ride
-                  AND status IN ('approved', 'pending')
+                  AND status_request IN ('approved', 'pending')
             `);
 
         // 5. Get the final ride state.
@@ -679,9 +676,15 @@ const updateRideLocation = async ({
         }
 
         // --------------------------------------------------
+        // Calculate balance after commission
+        // --------------------------------------------------
+        
+        const balanceAfter = currentBalance - commission;
+        
+        // --------------------------------------------------
         // Deduct commission
         // --------------------------------------------------
-
+        
         await new sql.Request(transaction)
             .input("id_wallet", sql.Int, wallet.id_wallet)
             .input("commission", sql.Decimal(10, 2), commission)
@@ -690,36 +693,37 @@ const updateRideLocation = async ({
                 SET balance = balance - @commission
                 WHERE id_wallet = @id_wallet
             `);
-
+        
         // --------------------------------------------------
         // Record commission transaction
         // --------------------------------------------------
-
+        
         await new sql.Request(transaction)
             .input("id_wallet", sql.Int, wallet.id_wallet)
             .input("amount", sql.Decimal(10, 2), commission)
+            .input("balance_after", sql.Decimal(10, 2), balanceAfter)
             .input("id_ride", sql.Int, id_ride)
             .query(`
                 INSERT INTO WALLET_TRANSACTION
                 (
                     id_wallet,
                     amount,
-                    transaction_type,
-                    reason,
-                    id_ride,
-                    creation_date
+                    balance_after,
+                    type,
+                    transaction_reason,
+                    id_ride
                 )
                 VALUES
                 (
                     @id_wallet,
-                    -@amount,
+                    @amount,
+                    @balance_after,
                     'debit',
                     'commission',
-                    @id_ride,
-                    GETDATE()
+                    @id_ride
                 )
             `);
-
+        
         // --------------------------------------------------
         // Complete ride
         // --------------------------------------------------

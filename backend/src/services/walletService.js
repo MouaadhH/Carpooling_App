@@ -201,9 +201,9 @@ const checkMinimumBalance = async (id_user, transaction = null) => {
                 SELECT TOP 1
                     min_balance_toride
                 FROM TARIF_CONFIGURATION
-                ORDER BY updated_at DESC
             ) tc
             WHERE w.id_user = @id_user
+            ORDER BY updated_at DESC
         `);
 
     if (walletResult.recordset.length === 0) {

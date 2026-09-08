@@ -187,41 +187,36 @@ const createRideRequest = async ({
         // ----------------------------------------------------
 
         const insertResult = await new sql.Request(transaction)
-     .input("id_user", sql.Int, id_user)
-     .input("id_ride", sql.Int, id_ride)
-     .input("seats_needed", sql.Int, Number(seats_needed))
-     .input("desired_time", sql.DateTime2, finalDesiredTime)
-     .input("desired_price", sql.Decimal(10, 2), lockedPrice)
-     .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
-     .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
-     .query(`
-       INSERT INTO RIDE_REQUEST (
-         id_user,
-         id_ride,
-         seats_needed,
-         desired_time,
-         desired_price,
-         id_adresse_pickup,
-         id_adresse_dropoff,
-         status
-       )
-       VALUES (
-         @id_user,
-         @id_ride,
-         @seats_needed,
-         @desired_time,
-         @desired_price,
-         @id_adresse_pickup,
-         @id_adresse_dropoff,
-         'pending'
-       );
-     
-       SELECT TOP 1 *
-       FROM RIDE_REQUEST
-       WHERE id_user = @id_user AND id_ride = @id_ride
-       ORDER BY id_ride_request DESC;
-     `);
-
+            .input("id_user", sql.Int, id_user)
+            .input("id_ride", sql.Int, id_ride)
+            .input("seats_needed", sql.Int, Number(seats_needed))
+            .input("desired_time", sql.DateTime2, finalDesiredTime)
+            .input("desired_price", sql.Decimal(10, 2), lockedPrice)
+            .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
+            .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
+            .query(`
+                INSERT INTO RIDE_REQUEST (
+                    id_user,
+                    id_ride,
+                    seats_needed,
+                    desired_time,
+                    desired_price,
+                    id_adresse_pickup,
+                    id_adresse_dropoff,
+                    status_request
+                )
+                OUTPUT INSERTED.*
+                VALUES (
+                    @id_user,
+                    @id_ride,
+                    @seats_needed,
+                    @desired_time,
+                    @desired_price,
+                    @id_adresse_pickup,
+                    @id_adresse_dropoff,
+                    'pending'
+                )
+            `);
 
         await transaction.commit();
 
@@ -367,8 +362,8 @@ const getRideRequests = async ({
                 rr.*,
                 u.name_u AS passenger_name,
                 u.phone_u AS passenger_phone,
-                a1.address_line AS pickup_address,
-                a2.address_line AS dropoff_address
+                a1.libelle AS pickup_address,
+                a2.libelle AS dropoff_address
             FROM RIDE_REQUEST rr
             INNER JOIN RIDE r
                 ON r.id_ride = rr.id_ride
@@ -380,7 +375,7 @@ const getRideRequests = async ({
                 ON a2.id_adresse = rr.id_adresse_dropoff
             WHERE rr.id_ride = @id_ride
               AND r.id_driver_posted = @id_driver_posted
-            ORDER BY rr.creation_date_request DESC
+            ORDER BY rr.creation_date_req DESC
         `);
 
     return result.recordset;
@@ -402,8 +397,8 @@ const getOpenRideRequests = async () => {
                 rr.*,
                 u.name_u AS passenger_name,
                 u.phone_u AS passenger_phone,
-                a1.address_line AS pickup_address,
-                a2.address_line AS dropoff_address
+                a1.libelle AS pickup_address,
+                a2.libelle AS dropoff_address
             FROM RIDE_REQUEST rr
             INNER JOIN [USER] u
                 ON u.id_user = rr.id_user
@@ -413,7 +408,7 @@ const getOpenRideRequests = async () => {
                 ON a2.id_adresse = rr.id_adresse_dropoff
             WHERE rr.id_ride IS NULL
               AND rr.status_request = 'pending'
-            ORDER BY rr.creation_date_request DESC
+            ORDER BY rr.creation_date_req DESC
         `);
 
     return result.recordset;
@@ -496,11 +491,13 @@ const acceptOpenRideRequest = async ({
             .input("id_driver", sql.Int, id_driver)
             .query(`
                 SELECT TOP 1
-                    id_vehicile
-                FROM VEHICILE
-                WHERE id_user = @id_driver
-                  AND is_approved = 1
-                ORDER BY id_vehicile
+                    v.id_vehicile
+                FROM VEHICLE v
+                INNER JOIN DRIVER_PROFILE dp
+                    ON v.id_profile = dp.id_profile
+                WHERE dp.id_driver = @id_driver
+                  AND v.verification_status = 'approved'
+                ORDER BY v.id_vehicile;
             `);
 
         if (vehicleResult.recordset.length === 0) {
@@ -591,8 +588,7 @@ const acceptOpenRideRequest = async ({
                 UPDATE RIDE_REQUEST
                 SET
                     id_ride = @id_ride,
-                    desired_price = @locked_price,
-                    status = 'approved'
+                    desired_price = @locked_price
                 OUTPUT INSERTED.*
                 WHERE id_ride_request = @id_ride_request
             `);
@@ -767,7 +763,7 @@ const approveRideRequest = async ({
             .query(`
                 UPDATE RIDE_REQUEST
                 SET
-                    status = 'approved',
+                    status_request = 'approved',
                     desired_price = @locked_price
                 OUTPUT INSERTED.*
                 WHERE id_ride_request = @id_ride_request
@@ -954,8 +950,8 @@ const getActiveRides = async (id_user) => {
                 r.*,
                 u.name_u AS driver_name,
                 u.phone_u AS driver_phone,
-                a1.address_line AS start_address,
-                a2.address_line AS arrive_address
+                a1.libelle AS start_address,
+                a2.libelle AS arrive_address
             FROM RIDE_REQUEST rr
             INNER JOIN RIDE r
                 ON r.id_ride = rr.id_ride
@@ -992,11 +988,11 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
                     rr.status_request,
                     rr.payment_status,
                     r.status_ride
-                FROM RIDE_REQUEST rr WITH (UPDLOCK, HOLDLOCK)
-                INNER JOIN RIDE r 
+                FROM RIDE_REQUEST rr
+                INNER JOIN RIDE r
                     ON rr.id_ride = r.id_ride
                 WHERE rr.id_ride_request = @id_ride_request
-                
+                WITH (UPDLOCK, HOLDLOCK)
             `);
 
         if (requestResult.recordset.length === 0) {
