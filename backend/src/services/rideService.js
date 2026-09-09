@@ -621,7 +621,7 @@ const updateRideLocation = async ({
                 SELECT COUNT(*) AS number_of_passengers
                 FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
                 WHERE id_ride = @id_ride
-                  AND status = 'approved'
+                  AND status_request = 'approved'
             `);
 
         const numberOfPassengers = Number(
