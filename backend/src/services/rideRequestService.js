@@ -187,36 +187,66 @@ const createRideRequest = async ({
         // ----------------------------------------------------
 
         const insertResult = await new sql.Request(transaction)
-            .input("id_user", sql.Int, id_user)
-            .input("id_ride", sql.Int, id_ride)
-            .input("seats_needed", sql.Int, Number(seats_needed))
-            .input("desired_time", sql.DateTime2, finalDesiredTime)
-            .input("desired_price", sql.Decimal(10, 2), lockedPrice)
-            .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
-            .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
-            .query(`
-                INSERT INTO RIDE_REQUEST (
-                    id_user,
-                    id_ride,
-                    seats_needed,
-                    desired_time,
-                    desired_price,
-                    id_adresse_pickup,
-                    id_adresse_dropoff,
-                    status_request
-                )
-                OUTPUT INSERTED.*
-                VALUES (
-                    @id_user,
-                    @id_ride,
-                    @seats_needed,
-                    @desired_time,
-                    @desired_price,
-                    @id_adresse_pickup,
-                    @id_adresse_dropoff,
-                    'pending'
-                )
-            `);
+    .input("id_user", sql.Int, id_user)
+    .input("id_ride", sql.Int, id_ride)
+    .input("seats_needed", sql.Int, Number(seats_needed))
+    .input("desired_time", sql.DateTime2, finalDesiredTime)
+    .input("desired_price", sql.Decimal(10, 2), lockedPrice)
+    .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
+    .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
+    .query(`
+        DECLARE @InsertedRequest TABLE (
+            id_ride_request INT,
+            id_user INT,
+            id_ride INT,
+            seats_needed INT,
+            creation_date_req DATETIME2,
+            desired_time DATETIME2,
+            desired_price DECIMAL(10,2),
+            id_adresse_pickup INT,
+            id_adresse_dropoff INT,
+            status_request NVARCHAR(20),
+            payment_method NVARCHAR(20),
+            payment_status NVARCHAR(20)
+        );
+
+        INSERT INTO RIDE_REQUEST (
+            id_user,
+            id_ride,
+            seats_needed,
+            desired_time,
+            desired_price,
+            id_adresse_pickup,
+            id_adresse_dropoff,
+            status_request
+        )
+        OUTPUT
+            INSERTED.id_ride_request,
+            INSERTED.id_user,
+            INSERTED.id_ride,
+            INSERTED.seats_needed,
+            INSERTED.creation_date_req,
+            INSERTED.desired_time,
+            INSERTED.desired_price,
+            INSERTED.id_adresse_pickup,
+            INSERTED.id_adresse_dropoff,
+            INSERTED.status_request,
+            INSERTED.payment_method,
+            INSERTED.payment_status
+        INTO @InsertedRequest
+        VALUES (
+            @id_user,
+            @id_ride,
+            @seats_needed,
+            @desired_time,
+            @desired_price,
+            @id_adresse_pickup,
+            @id_adresse_dropoff,
+            'pending'
+        );
+
+        SELECT * FROM @InsertedRequest;
+    `);
 
         await transaction.commit();
 
@@ -302,36 +332,66 @@ const createOpenRideRequest = async ({
     // --------------------------------------------------------
 
     const result = await pool
-        .request()
-        .input("id_user", sql.Int, id_user)
-        .input("seats_needed", sql.Int, Number(seats_needed))
-        .input("desired_time", sql.DateTime2, desired_time || null)
-        .input("desired_price", sql.Decimal(10, 2), priceValidation.price)
-        .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
-        .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
-        .query(`
-            INSERT INTO RIDE_REQUEST (
-                id_user,
-                id_ride,
-                seats_needed,
-                desired_time,
-                desired_price,
-                id_adresse_pickup,
-                id_adresse_dropoff,
-                status_request
-            )
-            OUTPUT INSERTED.*
-            VALUES (
-                @id_user,
-                NULL,
-                @seats_needed,
-                @desired_time,
-                @desired_price,
-                @id_adresse_pickup,
-                @id_adresse_dropoff,
-                'pending'
-            )
-        `);
+    .request()
+    .input("id_user", sql.Int, id_user)
+    .input("seats_needed", sql.Int, Number(seats_needed))
+    .input("desired_time", sql.DateTime2, desired_time || null)
+    .input("desired_price", sql.Decimal(10, 2), priceValidation.price)
+    .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
+    .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
+    .query(`
+        DECLARE @InsertedRequest TABLE (
+            id_ride_request INT,
+            id_user INT,
+            id_ride INT,
+            seats_needed INT,
+            creation_date_req DATETIME2,
+            desired_time DATETIME2,
+            desired_price DECIMAL(10,2),
+            id_adresse_pickup INT,
+            id_adresse_dropoff INT,
+            status_request NVARCHAR(20),
+            payment_method NVARCHAR(20),
+            payment_status NVARCHAR(20)
+        );
+
+        INSERT INTO RIDE_REQUEST (
+            id_user,
+            id_ride,
+            seats_needed,
+            desired_time,
+            desired_price,
+            id_adresse_pickup,
+            id_adresse_dropoff,
+            status_request
+        )
+        OUTPUT
+            INSERTED.id_ride_request,
+            INSERTED.id_user,
+            INSERTED.id_ride,
+            INSERTED.seats_needed,
+            INSERTED.creation_date_req,
+            INSERTED.desired_time,
+            INSERTED.desired_price,
+            INSERTED.id_adresse_pickup,
+            INSERTED.id_adresse_dropoff,
+            INSERTED.status_request,
+            INSERTED.payment_method,
+            INSERTED.payment_status
+        INTO @InsertedRequest
+        VALUES (
+            @id_user,
+            NULL,
+            @seats_needed,
+            @desired_time,
+            @desired_price,
+            @id_adresse_pickup,
+            @id_adresse_dropoff,
+            'pending'
+        );
+
+        SELECT * FROM @InsertedRequest;
+    `);
 
     return {
         ...result.recordset[0],
@@ -617,12 +677,42 @@ const acceptOpenRideRequest = async ({
             .input("id_ride", sql.Int, newRide.id_ride)
             .input("locked_price", sql.Decimal(10, 2), lockedPrice)
             .query(`
+                DECLARE @UpdatedRequest TABLE (
+                    id_ride_request INT,
+                    id_user INT,
+                    id_ride INT,
+                    seats_needed INT,
+                    creation_date_req DATETIME2,
+                    desired_time DATETIME2,
+                    desired_price DECIMAL(10,2),
+                    id_adresse_pickup INT,
+                    id_adresse_dropoff INT,
+                    status_request NVARCHAR(20),
+                    payment_method NVARCHAR(20),
+                    payment_status NVARCHAR(20)
+                );
+
                 UPDATE RIDE_REQUEST
                 SET
                     id_ride = @id_ride,
                     desired_price = @locked_price
-                OUTPUT INSERTED.*
-                WHERE id_ride_request = @id_ride_request
+                OUTPUT
+                    INSERTED.id_ride_request,
+                    INSERTED.id_user,
+                    INSERTED.id_ride,
+                    INSERTED.seats_needed,
+                    INSERTED.creation_date_req,
+                    INSERTED.desired_time,
+                    INSERTED.desired_price,
+                    INSERTED.id_adresse_pickup,
+                    INSERTED.id_adresse_dropoff,
+                    INSERTED.status_request,
+                    INSERTED.payment_method,
+                    INSERTED.payment_status
+                INTO @UpdatedRequest
+                WHERE id_ride_request = @id_ride_request;
+
+                SELECT * FROM @UpdatedRequest;
             `);
 
         await transaction.commit();
@@ -793,12 +883,42 @@ const approveRideRequest = async ({
             .input("id_ride_request", sql.Int, id_ride_request)
             .input("locked_price", sql.Decimal(10, 2), lockedPrice)
             .query(`
+                DECLARE @UpdatedRequest TABLE (
+                    id_ride_request INT,
+                    id_user INT,
+                    id_ride INT,
+                    seats_needed INT,
+                    creation_date_req DATETIME2,
+                    desired_time DATETIME2,
+                    desired_price DECIMAL(10,2),
+                    id_adresse_pickup INT,
+                    id_adresse_dropoff INT,
+                    status_request NVARCHAR(20),
+                    payment_method NVARCHAR(20),
+                    payment_status NVARCHAR(20)
+                );
+
                 UPDATE RIDE_REQUEST
                 SET
                     status_request = 'approved',
                     desired_price = @locked_price
-                OUTPUT INSERTED.*
-                WHERE id_ride_request = @id_ride_request
+                OUTPUT
+                    INSERTED.id_ride_request,
+                    INSERTED.id_user,
+                    INSERTED.id_ride,
+                    INSERTED.seats_needed,
+                    INSERTED.creation_date_req,
+                    INSERTED.desired_time,
+                    INSERTED.desired_price,
+                    INSERTED.id_adresse_pickup,
+                    INSERTED.id_adresse_dropoff,
+                    INSERTED.status_request,
+                    INSERTED.payment_method,
+                    INSERTED.payment_status
+                INTO @UpdatedRequest
+                WHERE id_ride_request = @id_ride_request;
+
+                SELECT * FROM @UpdatedRequest;
             `);
 
         // ----------------------------------------------------
@@ -863,15 +983,45 @@ const rejectRideRequest = async ({
         .input("id_ride_request", sql.Int, id_ride_request)
         .input("id_driver", sql.Int, id_driver)
         .query(`
+            DECLARE @UpdatedRequest TABLE (
+                id_ride_request INT,
+                id_user INT,
+                id_ride INT,
+                seats_needed INT,
+                creation_date_req DATETIME2,
+                desired_time DATETIME2,
+                desired_price DECIMAL(10,2),
+                id_adresse_pickup INT,
+                id_adresse_dropoff INT,
+                status_request NVARCHAR(20),
+                payment_method NVARCHAR(20),
+                payment_status NVARCHAR(20)
+            );
+
             UPDATE rr
             SET status_request = 'rejected'
-            OUTPUT INSERTED.*
+            OUTPUT
+                INSERTED.id_ride_request,
+                INSERTED.id_user,
+                INSERTED.id_ride,
+                INSERTED.seats_needed,
+                INSERTED.creation_date_req,
+                INSERTED.desired_time,
+                INSERTED.desired_price,
+                INSERTED.id_adresse_pickup,
+                INSERTED.id_adresse_dropoff,
+                INSERTED.status_request,
+                INSERTED.payment_method,
+                INSERTED.payment_status
+            INTO @UpdatedRequest
             FROM RIDE_REQUEST rr
             INNER JOIN RIDE r
                 ON r.id_ride = rr.id_ride
             WHERE rr.id_ride_request = @id_ride_request
               AND r.id_driver_posted = @id_driver
-              AND rr.status_request = 'pending'
+              AND rr.status_request = 'pending';
+
+            SELECT * FROM @UpdatedRequest;
         `);
 
     if (result.recordset.length === 0) {
@@ -895,17 +1045,47 @@ const cancelRideRequest = async ({
 
     const pool = getPool();
 
-    const result = await pool
+     const result = await pool
         .request()
         .input("id_ride_request", sql.Int, id_ride_request)
         .input("id_user", sql.Int, id_user)
         .query(`
+            DECLARE @UpdatedRequest TABLE (
+                id_ride_request INT,
+                id_user INT,
+                id_ride INT,
+                seats_needed INT,
+                creation_date_req DATETIME2,
+                desired_time DATETIME2,
+                desired_price DECIMAL(10,2),
+                id_adresse_pickup INT,
+                id_adresse_dropoff INT,
+                status_request NVARCHAR(20),
+                payment_method NVARCHAR(20),
+                payment_status NVARCHAR(20)
+            );
+
             UPDATE RIDE_REQUEST
             SET status_request = 'cancelled'
-            OUTPUT INSERTED.*
+            OUTPUT
+                INSERTED.id_ride_request,
+                INSERTED.id_user,
+                INSERTED.id_ride,
+                INSERTED.seats_needed,
+                INSERTED.creation_date_req,
+                INSERTED.desired_time,
+                INSERTED.desired_price,
+                INSERTED.id_adresse_pickup,
+                INSERTED.id_adresse_dropoff,
+                INSERTED.status_request,
+                INSERTED.payment_method,
+                INSERTED.payment_status
+            INTO @UpdatedRequest
             WHERE id_ride_request = @id_ride_request
               AND id_user = @id_user
-              AND status_request = 'pending'
+              AND status_request = 'pending';
+
+            SELECT * FROM @UpdatedRequest;
         `);
 
     if (result.recordset.length === 0) {
@@ -948,12 +1128,42 @@ const updatePaymentMethod = async ({
         .input("id_user", sql.Int, id_user)
         .input("payment_method", sql.NVarChar(20), payment_method)
         .query(`
+            DECLARE @UpdatedRequest TABLE (
+                id_ride_request INT,
+                id_user INT,
+                id_ride INT,
+                seats_needed INT,
+                creation_date_req DATETIME2,
+                desired_time DATETIME2,
+                desired_price DECIMAL(10,2),
+                id_adresse_pickup INT,
+                id_adresse_dropoff INT,
+                status_request NVARCHAR(20),
+                payment_method NVARCHAR(20),
+                payment_status NVARCHAR(20)
+            );
+
             UPDATE RIDE_REQUEST
             SET payment_method = @payment_method
-            OUTPUT INSERTED.*
+            OUTPUT
+                INSERTED.id_ride_request,
+                INSERTED.id_user,
+                INSERTED.id_ride,
+                INSERTED.seats_needed,
+                INSERTED.creation_date_req,
+                INSERTED.desired_time,
+                INSERTED.desired_price,
+                INSERTED.id_adresse_pickup,
+                INSERTED.id_adresse_dropoff,
+                INSERTED.status_request,
+                INSERTED.payment_method,
+                INSERTED.payment_status
+            INTO @UpdatedRequest
             WHERE id_ride_request = @id_ride_request
               AND id_user = @id_user
-              AND payment_status = 'pending'
+              AND payment_status = 'pending';
+
+            SELECT * FROM @UpdatedRequest;
         `);
 
     if (result.recordset.length === 0) {
