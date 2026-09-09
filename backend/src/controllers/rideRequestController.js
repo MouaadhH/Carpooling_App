@@ -1,13 +1,19 @@
 const {
     createRideRequest,
+    createOpenRideRequest,
     getRideRequests,
     getOpenRideRequests,
     acceptOpenRideRequest,
+    negotiateRideRequest,
+    acceptRideNegotiation,
+    rejectRideNegotiation,
     requestToJoinRide,
     approveRideRequest,
     rejectRideRequest,
     cancelRideRequest,
-    payRideRequest
+    payRideRequest,
+    updatePaymentMethod,
+    
 } = require("../services/rideRequestService");
 
 const createRideRequestController = async (req, res) => {
@@ -116,7 +122,7 @@ const createOpenRideRequestController = async (req, res) => {
 
         const id_user = req.user.id_user;
 
-        const request = await createRideRequest({
+        const request = await createOpenRideRequest({
             id_user,
             id_ride: null,
             seats_needed,
@@ -290,7 +296,7 @@ const updatePaymentMethodController = async (req, res) => {
             });
         }
 
-        const updatedRequest = await rideRequestService.updatePaymentMethod({
+        const updatedRequest = await updatePaymentMethod({
             id_ride_request,
             id_user,
             payment_method
@@ -337,15 +343,153 @@ const payRideRequestController = async (req, res) => {
     }
 };
 
+// ============================================================
+// DRIVER NEGOTIATES RIDE REQUEST
+// ============================================================
+
+const negotiateRideRequestController = async (req, res) => {
+
+    try {
+
+        const id_ride_request = Number(req.params.id);
+        const id_driver = req.user.id_user;
+        const { negotiated_price } = req.body;
+
+        if (!Number.isInteger(id_ride_request)) {
+            return res.status(400).json({
+                message: "Invalid ride request ID"
+            });
+        }
+
+        if (
+            negotiated_price === undefined ||
+            negotiated_price === null
+        ) {
+            return res.status(400).json({
+                message: "negotiated_price is required"
+            });
+        }
+
+        const request = await negotiateRideRequest({
+            id_ride_request,
+            id_driver,
+            negotiated_price
+        });
+
+        return res.status(200).json({
+            message: "Ride price negotiated successfully",
+            request
+        });
+
+    } catch (error) {
+
+        console.error(
+            "NEGOTIATE RIDE REQUEST ERROR:",
+            error
+        );
+
+        return res.status(400).json({
+            message: error.message
+        });
+    }
+};
+
+
+// ============================================================
+// PASSENGER ACCEPTS NEGOTIATION
+// ============================================================
+
+const acceptRideNegotiationController = async (req, res) => {
+
+    try {
+
+        const id_ride_request = Number(req.params.id);
+        const id_user = req.user.id_user;
+
+        if (!Number.isInteger(id_ride_request)) {
+            return res.status(400).json({
+                message: "Invalid ride request ID"
+            });
+        }
+
+        const result = await acceptRideNegotiation({
+            id_ride_request,
+            id_user
+        });
+
+        return res.status(200).json({
+            message: "Negotiated price accepted successfully",
+            ride: result.ride,
+            rideRequest: result.rideRequest
+        });
+
+    } catch (error) {
+
+        console.error(
+            "ACCEPT NEGOTIATION ERROR:",
+            error
+        );
+
+        return res.status(400).json({
+            message: error.message
+        });
+    }
+};
+
+
+// ============================================================
+// PASSENGER REJECTS NEGOTIATION
+// ============================================================
+
+const rejectRideNegotiationController = async (req, res) => {
+
+    try {
+
+        const id_ride_request = Number(req.params.id);
+        const id_user = req.user.id_user;
+
+        if (!Number.isInteger(id_ride_request)) {
+            return res.status(400).json({
+                message: "Invalid ride request ID"
+            });
+        }
+
+        const request = await rejectRideNegotiation({
+            id_ride_request,
+            id_user
+        });
+
+        return res.status(200).json({
+            message: "Negotiated price rejected successfully",
+            request
+        });
+
+    } catch (error) {
+
+        console.error(
+            "REJECT NEGOTIATION ERROR:",
+            error
+        );
+
+        return res.status(400).json({
+            message: error.message
+        });
+    }
+};
+
 module.exports = {
     createRideRequestController,
     getRideRequestsController,
     createOpenRideRequestController,
     getOpenRideRequestsController,
     acceptOpenRideRequestController,
+    negotiateRideRequestController,
+    acceptRideNegotiationController,
+    rejectRideNegotiationController,
     approveRideRequestController,
     rejectRideRequestController,
     cancelRideRequestController,
     updatePaymentMethodController,
-    payRideRequestController
+    payRideRequestController,
+    updatePaymentMethodController
 };

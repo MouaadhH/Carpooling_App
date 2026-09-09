@@ -3,7 +3,10 @@ const express = require("express");
 const {
     createOpenRideRequestController,
     getOpenRideRequestsController,
-    acceptOpenRideRequestController
+    acceptOpenRideRequestController,
+    negotiateRideRequestController,
+    acceptRideNegotiationController,
+    rejectRideNegotiationController
 } = require("../controllers/rideRequestController");
 
 const {
@@ -53,6 +56,30 @@ router.patch(
     authenticateToken,
     authorizeRoles("driver"),
     acceptOpenRideRequestController
+);
+
+// Driver negotiates the price
+router.patch(
+    "/requests/:id/negotiate",
+    authenticateToken,
+    authorizeRoles("driver"),
+    negotiateRideRequestController
+);
+
+// Passenger accepts driver's negotiated price
+router.patch(
+    "/requests/:id/accept-negotiation",
+    authenticateToken,
+    authorizeRoles("passenger"),
+    acceptRideNegotiationController
+);
+
+// Passenger rejects driver's negotiated price
+router.patch(
+    "/requests/:id/reject-negotiation",
+    authenticateToken,
+    authorizeRoles("passenger"),
+    rejectRideNegotiationController
 );
 
 
