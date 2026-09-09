@@ -734,6 +734,624 @@ const acceptOpenRideRequest = async ({
     }
 };
 
+// ============================================================
+// DRIVER NEGOTIATES OPEN RIDE REQUEST
+// ============================================================
+
+const negotiateRideRequest = async ({
+    id_ride_request,
+    id_driver,
+    negotiated_price
+}) => {
+
+    const pool = getPool();
+
+    const transaction = new sql.Transaction(pool);
+
+    try {
+
+        await transaction.begin();
+
+        // ----------------------------------------------------
+        // Lock the request
+        // ----------------------------------------------------
+
+        const requestResult = await new sql.Request(transaction)
+            .input("id_ride_request", sql.Int, id_ride_request)
+            .query(`
+                SELECT
+                    *
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride_request = @id_ride_request
+            `);
+
+        if (requestResult.recordset.length === 0) {
+            throw new Error("Ride request not found");
+        }
+
+        const request = requestResult.recordset[0];
+
+        // ----------------------------------------------------
+        // Request must still be pending
+        // ----------------------------------------------------
+
+        if (request.status_request !== "pending") {
+            throw new Error("Ride request is no longer pending");
+        }
+
+        // ----------------------------------------------------
+        // Must be an open request
+        // ----------------------------------------------------
+
+        if (request.id_ride !== null) {
+            throw new Error("Ride request is already linked to a ride");
+        }
+
+        // ----------------------------------------------------
+        // Passenger cannot negotiate their own request
+        // ----------------------------------------------------
+
+        if (Number(request.id_user) === Number(id_driver)) {
+            throw new Error(
+                "Passenger cannot negotiate their own ride request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Validate addresses
+        // ----------------------------------------------------
+
+        if (
+            !request.id_adresse_pickup ||
+            !request.id_adresse_dropoff
+        ) {
+            throw new Error("Ride request addresses are required");
+        }
+
+        // ----------------------------------------------------
+        // Validate negotiated price
+        // ----------------------------------------------------
+
+        const price = Number(negotiated_price);
+
+        if (!Number.isFinite(price) || price <= 0) {
+            throw new Error(
+                "Negotiated price must be a valid positive number"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Calculate actual distance
+        // ----------------------------------------------------
+
+        const distance = await getDistanceBetweenAddresses({
+            id_adresse_start: request.id_adresse_pickup,
+            id_adresse_arrive: request.id_adresse_dropoff,
+            transaction
+        });
+
+        // ----------------------------------------------------
+        // Validate negotiated price against current tariff
+        // ----------------------------------------------------
+
+        const priceValidation = await validateRidePrice({
+            distance,
+            price
+        });
+
+        const validatedPrice = priceValidation.price;
+
+        // ----------------------------------------------------
+        // Prevent another negotiation while one is pending
+        // ----------------------------------------------------
+
+        if (
+            request.negotiated_price !== null &&
+            request.negotiation_status === "pending"
+        ) {
+            throw new Error(
+                "A negotiation is already pending for this request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Store driver's offer
+        // ----------------------------------------------------
+
+        const updateResult = await new sql.Request(transaction)
+            .input(
+                "id_ride_request",
+                sql.Int,
+                id_ride_request
+            )
+            .input(
+                "negotiated_price",
+                sql.Decimal(10, 2),
+                validatedPrice
+            )
+            .input(
+                "id_driver_negotiated",
+                sql.Int,
+                id_driver
+            )
+            .query(`
+                UPDATE RIDE_REQUEST
+                SET
+                    negotiated_price = @negotiated_price,
+                    negotiation_status = 'pending',
+                    id_driver_negotiated = @id_driver_negotiated
+                WHERE id_ride_request = @id_ride_request;
+
+                SELECT
+                    *
+                FROM RIDE_REQUEST
+                WHERE id_ride_request = @id_ride_request;
+            `);
+
+        await transaction.commit();
+
+        return updateResult.recordset[0];
+
+    } catch (error) {
+
+        if (transaction._aborted !== true) {
+            try {
+                await transaction.rollback();
+            } catch (_) {}
+        }
+
+        throw error;
+    }
+};
+
+
+// ============================================================
+// PASSENGER ACCEPTS NEGOTIATION
+// ============================================================
+
+const acceptRideNegotiation = async ({
+    id_ride_request,
+    id_user
+}) => {
+
+    const pool = getPool();
+
+    const transaction = new sql.Transaction(pool);
+
+    try {
+
+        await transaction.begin();
+
+        // ----------------------------------------------------
+        // Lock the request
+        // ----------------------------------------------------
+
+        const requestResult = await new sql.Request(transaction)
+            .input(
+                "id_ride_request",
+                sql.Int,
+                id_ride_request
+            )
+            .query(`
+                SELECT
+                    *
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride_request = @id_ride_request
+            `);
+
+        if (requestResult.recordset.length === 0) {
+            throw new Error("Ride request not found");
+        }
+
+        const request = requestResult.recordset[0];
+
+        // ----------------------------------------------------
+        // Verify passenger ownership
+        // ----------------------------------------------------
+
+        if (Number(request.id_user) !== Number(id_user)) {
+            throw new Error(
+                "You are not allowed to accept this negotiation"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Request must still be pending
+        // ----------------------------------------------------
+
+        if (request.status_request !== "pending") {
+            throw new Error("Ride request is no longer pending");
+        }
+
+        // ----------------------------------------------------
+        // Must still be an open request
+        // ----------------------------------------------------
+
+        if (request.id_ride !== null) {
+            throw new Error(
+                "Ride request is already linked to a ride"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Must have a pending negotiation
+        // ----------------------------------------------------
+
+        if (
+            request.negotiation_status !== "pending" ||
+            request.negotiated_price === null
+        ) {
+            throw new Error(
+                "There is no pending negotiation for this request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Driver must exist
+        // ----------------------------------------------------
+
+        if (request.id_driver_negotiated === null) {
+            throw new Error(
+                "Negotiating driver is missing"
+            );
+        }
+
+        const id_driver = request.id_driver_negotiated;
+
+        // ----------------------------------------------------
+        // Passenger cannot be the negotiating driver
+        // ----------------------------------------------------
+
+        if (Number(request.id_user) === Number(id_driver)) {
+            throw new Error(
+                "Passenger cannot accept their own request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Find driver's approved vehicle
+        // ----------------------------------------------------
+
+        const vehicleResult = await new sql.Request(transaction)
+            .input("id_driver", sql.Int, id_driver)
+            .query(`
+                SELECT TOP 1
+                    v.id_vehicile
+                FROM VEHICLE v
+                INNER JOIN DRIVER_PROFILE dp
+                    ON v.id_profile = dp.id_profile
+                WHERE dp.id_driver = @id_driver
+                  AND v.verification_status = 'approved'
+                ORDER BY v.id_vehicile;
+            `);
+
+        if (vehicleResult.recordset.length === 0) {
+            throw new Error(
+                "Driver does not have an approved vehicle"
+            );
+        }
+
+        const id_vehicile =
+            vehicleResult.recordset[0].id_vehicile;
+
+        // ----------------------------------------------------
+        // Check driver's minimum balance
+        // ----------------------------------------------------
+
+        await checkMinimumBalance(
+            id_driver,
+            transaction
+        );
+
+        // ----------------------------------------------------
+        // Validate addresses
+        // ----------------------------------------------------
+
+        if (
+            !request.id_adresse_pickup ||
+            !request.id_adresse_dropoff
+        ) {
+            throw new Error(
+                "Ride request addresses are required"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Calculate actual distance again
+        // ----------------------------------------------------
+
+        const distance =
+            await getDistanceBetweenAddresses({
+                id_adresse_start:
+                    request.id_adresse_pickup,
+                id_adresse_arrive:
+                    request.id_adresse_dropoff,
+                transaction
+            });
+
+        // ----------------------------------------------------
+        // Revalidate negotiated price
+        // ----------------------------------------------------
+
+        const priceValidation =
+            await validateRidePrice({
+                distance,
+                price: request.negotiated_price
+            });
+
+        const lockedPrice =
+            priceValidation.price;
+
+        // ----------------------------------------------------
+        // Create the ride
+        // NO OUTPUT INSERTED
+        // ----------------------------------------------------
+
+        const rideResult =
+            await new sql.Request(transaction)
+                .input(
+                    "id_driver_posted",
+                    sql.Int,
+                    id_driver
+                )
+                .input(
+                    "id_vehicile",
+                    sql.Int,
+                    id_vehicile
+                )
+                .input(
+                    "id_adresse_start",
+                    sql.Int,
+                    request.id_adresse_pickup
+                )
+                .input(
+                    "id_adresse_arrive",
+                    sql.Int,
+                    request.id_adresse_dropoff
+                )
+                .input(
+                    "departure_time",
+                    sql.DateTime2,
+                    request.desired_time
+                )
+                .input(
+                    "distance",
+                    sql.Decimal(10, 2),
+                    distance
+                )
+                .input(
+                    "prix_total",
+                    sql.Decimal(10, 2),
+                    lockedPrice
+                )
+                .input(
+                    "empty_seats",
+                    sql.Int,
+                    Number(request.seats_needed)
+                )
+                .query(`
+                    DECLARE @newRideId INT;
+
+                    INSERT INTO RIDE (
+                        id_driver_posted,
+                        id_vehicile,
+                        id_adresse_start,
+                        id_adresse_arrive,
+                        departure_time,
+                        distance,
+                        prix_total,
+                        empty_seats,
+                        status_ride,
+                        is_available
+                    )
+                    VALUES (
+                        @id_driver_posted,
+                        @id_vehicile,
+                        @id_adresse_start,
+                        @id_adresse_arrive,
+                        @departure_time,
+                        @distance,
+                        @prix_total,
+                        @empty_seats,
+                        'active',
+                        1
+                    );
+
+                    SET @newRideId = SCOPE_IDENTITY();
+
+                    SELECT
+                        id_ride,
+                        prix_total,
+                        distance,
+                        empty_seats,
+                        departure_time,
+                        status_ride,
+                        commission,
+                        creation_date_ride,
+                        id_driver_posted,
+                        id_vehicile,
+                        id_adresse_start,
+                        id_adresse_arrive,
+                        is_available
+                    FROM RIDE
+                    WHERE id_ride = @newRideId;
+                `);
+
+        if (rideResult.recordset.length === 0) {
+            throw new Error(
+                "Failed to create ride"
+            );
+        }
+
+        const newRide = rideResult.recordset[0];
+
+        // ----------------------------------------------------
+        // Link request to ride
+        // ----------------------------------------------------
+
+        const updateRequestResult =
+            await new sql.Request(transaction)
+                .input(
+                    "id_ride_request",
+                    sql.Int,
+                    id_ride_request
+                )
+                .input(
+                    "id_ride",
+                    sql.Int,
+                    newRide.id_ride
+                )
+                .input(
+                    "locked_price",
+                    sql.Decimal(10, 2),
+                    lockedPrice
+                )
+                .query(`
+                    UPDATE RIDE_REQUEST
+                    SET
+                        id_ride = @id_ride,
+                        desired_price = @locked_price,
+                        status_request = 'approved',
+                        negotiation_status = 'accepted'
+                    WHERE id_ride_request = @id_ride_request;
+
+                    SELECT
+                        *
+                    FROM RIDE_REQUEST
+                    WHERE id_ride_request = @id_ride_request;
+                `);
+
+        await transaction.commit();
+
+        return {
+            ride: newRide,
+            rideRequest:
+                updateRequestResult.recordset[0]
+        };
+
+    } catch (error) {
+
+        if (transaction._aborted !== true) {
+            try {
+                await transaction.rollback();
+            } catch (_) {}
+        }
+
+        throw error;
+    }
+};
+
+
+// ============================================================
+// PASSENGER REJECTS NEGOTIATION
+// ============================================================
+
+const rejectRideNegotiation = async ({
+    id_ride_request,
+    id_user
+}) => {
+
+    const pool = getPool();
+
+    const transaction = new sql.Transaction(pool);
+
+    try {
+
+        await transaction.begin();
+
+        // ----------------------------------------------------
+        // Lock the request
+        // ----------------------------------------------------
+
+        const requestResult = await new sql.Request(transaction)
+            .input(
+                "id_ride_request",
+                sql.Int,
+                id_ride_request
+            )
+            .query(`
+                SELECT
+                    *
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride_request = @id_ride_request
+            `);
+
+        if (requestResult.recordset.length === 0) {
+            throw new Error("Ride request not found");
+        }
+
+        const request = requestResult.recordset[0];
+
+        // ----------------------------------------------------
+        // Verify passenger ownership
+        // ----------------------------------------------------
+
+        if (Number(request.id_user) !== Number(id_user)) {
+            throw new Error(
+                "You are not allowed to reject this negotiation"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Request must still be pending
+        // ----------------------------------------------------
+
+        if (request.status_request !== "pending") {
+            throw new Error("Ride request is no longer pending");
+        }
+
+        // ----------------------------------------------------
+        // Must have a pending negotiation
+        // ----------------------------------------------------
+
+        if (
+            request.negotiation_status !== "pending" ||
+            request.negotiated_price === null
+        ) {
+            throw new Error(
+                "There is no pending negotiation for this request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Reject negotiation
+        // ----------------------------------------------------
+
+        const updateResult =
+            await new sql.Request(transaction)
+                .input(
+                    "id_ride_request",
+                    sql.Int,
+                    id_ride_request
+                )
+                .query(`
+                    UPDATE RIDE_REQUEST
+                    SET
+                        negotiation_status = 'rejected'
+                    WHERE id_ride_request = @id_ride_request;
+
+                    SELECT
+                        *
+                    FROM RIDE_REQUEST
+                    WHERE id_ride_request = @id_ride_request;
+                `);
+
+        await transaction.commit();
+
+        return updateResult.recordset[0];
+
+    } catch (error) {
+
+        if (transaction._aborted !== true) {
+            try {
+                await transaction.rollback();
+            } catch (_) {}
+        }
+
+        throw error;
+    }
+};
+
 
 // ============================================================
 // REQUEST TO JOIN EXISTING RIDE
@@ -1230,11 +1848,11 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
                     rr.status_request,
                     rr.payment_status,
                     r.status_ride
-                FROM RIDE_REQUEST rr
+                FROM RIDE_REQUEST rr WITH (UPDLOCK, HOLDLOCK)
                 INNER JOIN RIDE r
-                    ON rr.id_ride = r.id_ride
+                    ON rr.id_ride = r.id_ride 
                 WHERE rr.id_ride_request = @id_ride_request
-                WITH (UPDLOCK, HOLDLOCK)
+                
             `);
 
         if (requestResult.recordset.length === 0) {
@@ -1244,9 +1862,9 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
         const request = requestResult.recordset[0];
 
         // Make sure this request belongs to the passenger
-        if (request.id_user !== id_user) {
-            throw new Error("You are not authorized to pay this ride request");
-        }
+        if (Number(request.id_user) !== Number(id_user)) {
+          throw new Error("You are not authorized to pay this ride request");
+       }
 
         // Only approved requests can be paid
         if (request.status_request !== "approved") {
@@ -1310,6 +1928,9 @@ module.exports = {
     getRideRequests,
     getOpenRideRequests,
     acceptOpenRideRequest,
+    negotiateRideRequest,
+    acceptRideNegotiation,
+    rejectRideNegotiation,
     requestToJoinRide,
     approveRideRequest,
     rejectRideRequest,
