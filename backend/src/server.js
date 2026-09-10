@@ -10,6 +10,7 @@ const rideRequestRoutes = require("./routes/riderequestroutes");
 const openRideRequestRoutes = require("./routes/openRideRequestRoutes");
 const walletRoutes = require("./routes/walletRoutes");
 const rechargeRoutes = require("./routes/rechargeRoutes");
+const evaluationRoutes = require("./routes/evaluationRoutes");
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use("/api/rides", rideRequestRoutes);
 app.use("/api/ride-requests", openRideRequestRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/wallet/recharge", rechargeRoutes);
+app.use("/api/evaluations", evaluationRoutes);
 connectDB();
 
 app.listen(PORT, () => {
