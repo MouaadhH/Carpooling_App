@@ -18,7 +18,7 @@ const driverProfileRoutes = require("./routes/driverProfileRoutes");
 const app = express();
 
 const PORT = 3000;
-console.log("JWT_SECRET loaded:", !!process.env.JWT_SECRET);
+
 app.use(express.json());
 
 app.get("/", (req, res) => {

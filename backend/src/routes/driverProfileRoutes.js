@@ -3,11 +3,15 @@ const express = require("express");
 const {
     createDriverProfileController,
     getMyDriverProfileController,
-    updateDriverProfileController
+    updateDriverProfileController,
+    getPendingDriversController,
+    getDriverForVerificationController,
+    verifyDriverController,
+    rejectDriverController
 } = require("../controllers/driverProfileController");
 
 const {
-    authenticateToken,
+    authenticateToken
 } = require("../middleware/authMiddleware");
 
 const {
@@ -15,6 +19,9 @@ const {
 } = require("../middleware/roleMiddleware");
 
 const router = express.Router();
+
+
+// ==================== DRIVER ====================
 
 router.post(
     "/profile",
@@ -36,5 +43,37 @@ router.put(
     authorizeRoles("driver"),
     updateDriverProfileController
 );
+
+
+// ==================== ADMIN ====================
+
+router.get(
+    "/admin/unverified",
+    authenticateToken,
+    authorizeRoles("admin"),
+    getPendingDriversController
+);
+
+router.get(
+    "/admin/:id/profile",
+    authenticateToken,
+    authorizeRoles("admin"),
+    getDriverForVerificationController
+);
+
+router.patch(
+    "/admin/:id/verify",
+    authenticateToken,
+    authorizeRoles("admin"),
+    verifyDriverController
+);
+
+router.patch(
+    "/admin/:id/reject",
+    authenticateToken,
+    authorizeRoles("admin"),
+    rejectDriverController
+);
+
 
 module.exports = router;

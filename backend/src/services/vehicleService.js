@@ -21,7 +21,7 @@ const getPendingVehicles = async () => {
 
                 dp.id_driver,
                 dp.lisence_num,
-                dp.kyc_status,
+                dp.is_verified ,
 
                 u.name_u AS driver_name,
                 u.phone_u AS driver_phone
@@ -63,7 +63,7 @@ const getVehicleById = async ({ id_vehicile }) => {
                 dp.id_driver,
                 dp.lisence_num,
                 dp.lisence_pic,
-                dp.kyc_status,
+                dp.is_verified,
 
                 u.name_u AS driver_name,
                 u.phone_u AS driver_phone
