@@ -1,7 +1,11 @@
 const {
     createDriverProfile,
     getMyDriverProfile,
-    updateDriverProfile
+    updateDriverProfile,
+    getPendingDrivers,
+    getDriverForVerification,
+    verifyDriver,
+    rejectDriver
 } = require("../services/driverProfileService");
 
 
@@ -95,8 +99,98 @@ const updateDriverProfileController = async (req, res) => {
 };
 
 
+
+const getPendingDriversController = async (req, res) => {
+    try {
+        const drivers = await getPendingDrivers();
+
+        res.status(200).json({
+            message: "Driver profiles retrieved successfully",
+            drivers
+        });
+
+    } catch (error) {
+        console.error("GET PENDING DRIVERS ERROR:", error);
+
+        res.status(500).json({
+            message: "Failed to retrieve driver profiles",
+            error: error.message
+        });
+    }
+};
+
+
+const getDriverForVerificationController = async (req, res) => {
+    try {
+        const driver = await getDriverForVerification({
+            id_driver: req.params.id
+        });
+
+        res.status(200).json({
+            message: "Driver profile retrieved successfully",
+            driver
+        });
+
+    } catch (error) {
+        res.status(404).json({
+            message: "Failed to retrieve driver profile",
+            error: error.message
+        });
+    }
+};
+
+
+const verifyDriverController = async (req, res) => {
+    try {
+        const driver = await verifyDriver({
+            id_driver: req.params.id,
+            id_admin: req.user.id_user
+        });
+
+        res.status(200).json({
+            message: "Driver verified successfully",
+            driver
+        });
+
+    } catch (error) {
+        console.error("VERIFY DRIVER ERROR:", error);
+
+        res.status(400).json({
+            message: "Failed to verify driver",
+            error: error.message
+        });
+    }
+};
+
+
+const rejectDriverController = async (req, res) => {
+    try {
+        const driver = await rejectDriver({
+            id_driver: req.params.id,
+            id_admin: req.user.id_user
+        });
+
+        res.status(200).json({
+            message: "Driver rejected successfully",
+            driver
+        });
+
+    } catch (error) {
+        console.error("REJECT DRIVER ERROR:", error);
+
+        res.status(400).json({
+            message: "Failed to reject driver",
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     createDriverProfileController,
     getMyDriverProfileController,
-    updateDriverProfileController
+    updateDriverProfileController,
+    getPendingDriversController,
+    getDriverForVerificationController,
+    verifyDriverController,
+    rejectDriverController
 };
