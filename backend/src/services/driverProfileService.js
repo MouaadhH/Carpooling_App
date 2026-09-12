@@ -189,11 +189,8 @@ const verifyDriver = async ({
             .query(`
                 SELECT
                     dp.id_profile,
-                    dp.is_verified,
-                    u.kyc_verification_status
+                    dp.is_verified
                 FROM DRIVER_PROFILE dp
-                INNER JOIN [USER] u
-                    ON u.id_user = dp.id_driver
                 WHERE dp.id_driver = @id_driver;
             `);
 
@@ -203,11 +200,7 @@ const verifyDriver = async ({
 
         const driver = driverResult.recordset[0];
 
-        if (driver.kyc_verification_status !== "verified") {
-            throw new Error(
-                "Driver identity must be KYC verified before driver verification"
-            );
-        }
+        
 
         if (driver.is_verified === true || Number(driver.is_verified) === 1) {
             throw new Error("Driver is already verified");
