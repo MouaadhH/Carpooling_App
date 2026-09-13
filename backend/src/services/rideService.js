@@ -44,6 +44,7 @@ const createRide = async ({
         We use the latest configuration because the allowed
         price range can change when the admin changes tariffs.
     */
+   
     const tariffResult = await pool
         .request()
         .query(`
@@ -203,6 +204,7 @@ const getAvailableRides = async () => {
 
             WHERE r.status_ride = 'active'
               AND r.is_available = 1
+              AND r.empty_seats > 0
               AND r.departure_time >= SYSDATETIME()
 
             ORDER BY r.departure_time ASC
@@ -317,10 +319,11 @@ const updateRide = async ({
             SELECT
                 r.status_ride,
                 r.is_available,
-                COUNT(
+                SUM(
                     CASE
                         WHEN rr.status_request = 'approved'
-                        THEN 1
+                        THEN seats_needed 
+                        ELSE 0
                     END
                 ) AS approved_passengers
             FROM RIDE r
@@ -336,6 +339,12 @@ const updateRide = async ({
     if (rideResult.recordset.length === 0) {
         throw new Error(
             "Ride not found or you are not the driver who posted it"
+        );
+    }
+
+    if (rideEmptySeats < approvedSeats) {
+        throw new Error(
+            `empty_seats cannot be less than the number of approved seats (${approvedSeats})`
         );
     }
 
@@ -447,13 +456,15 @@ const cancelRide = async ({ id_ride, id_driver }) => {
         // 3. Cancel the ride.
         await new sql.Request(transaction)
             .input("id_ride", id_ride)
+            .input
             .query(`
                 UPDATE RIDE
                 SET
                     status_ride = 'cancelled',
                     is_available = 0
                 WHERE id_ride = @id_ride
-                 and status_ride = 'active'
+                  AND id_driver_posted = @id_driver
+                  AND status_ride = 'active';
             `);
 
         // 4. Cancel passenger requests that were already approved.

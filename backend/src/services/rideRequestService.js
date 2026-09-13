@@ -1518,7 +1518,7 @@ const approveRideRequest = async ({
                     is_available =
                         CASE
                             WHEN @empty_seats <= 0 THEN 0
-                            ELSE 1
+                            ELSE is_available
                         END
                 WHERE id_ride = @id_ride
             `);
@@ -1624,57 +1624,155 @@ const cancelRideRequest = async ({
 }) => {
 
     const pool = getPool();
+    const transaction = new sql.Transaction(pool);
 
-     const result = await pool
-        .request()
-        .input("id_ride_request", sql.Int, id_ride_request)
-        .input("id_user", sql.Int, id_user)
-        .query(`
-            DECLARE @UpdatedRequest TABLE (
-                id_ride_request INT,
-                id_user INT,
-                id_ride INT,
-                seats_needed INT,
-                creation_date_req DATETIME2,
-                desired_time DATETIME2,
-                desired_price DECIMAL(10,2),
-                id_adresse_pickup INT,
-                id_adresse_dropoff INT,
-                status_request NVARCHAR(20),
-                payment_method NVARCHAR(20),
-                payment_status NVARCHAR(20)
+    try {
+        await transaction.begin();
+
+        // Lock the request and verify ownership/status
+        const requestResult = await transaction
+            .request()
+            .input("id_ride_request", sql.Int, id_ride_request)
+            .input("id_user", sql.Int, id_user)
+            .query(`
+                SELECT
+                    id_ride_request,
+                    id_user,
+                    id_ride,
+                    seats_needed,
+                    creation_date_req,
+                    desired_time,
+                    desired_price,
+                    id_adresse_pickup,
+                    id_adresse_dropoff,
+                    status_request,
+                    payment_method,
+                    payment_status
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride_request = @id_ride_request
+                  AND id_user = @id_user;
+            `);
+
+        if (requestResult.recordset.length === 0) {
+            throw new Error(
+                "Ride request not found or you are not the owner"
             );
+        }
 
-            UPDATE RIDE_REQUEST
-            SET status_request = 'cancelled'
-            OUTPUT
-                INSERTED.id_ride_request,
-                INSERTED.id_user,
-                INSERTED.id_ride,
-                INSERTED.seats_needed,
-                INSERTED.creation_date_req,
-                INSERTED.desired_time,
-                INSERTED.desired_price,
-                INSERTED.id_adresse_pickup,
-                INSERTED.id_adresse_dropoff,
-                INSERTED.status_request,
-                INSERTED.payment_method,
-                INSERTED.payment_status
-            INTO @UpdatedRequest
-            WHERE id_ride_request = @id_ride_request
-              AND id_user = @id_user
-              AND status_request = 'pending';
+        const request = requestResult.recordset[0];
 
-            SELECT * FROM @UpdatedRequest;
-        `);
+        // Pending requests can always be cancelled
+        if (request.status_request === "pending") {
 
-    if (result.recordset.length === 0) {
-        throw new Error(
-            "Ride request not found, already processed, or you are not the owner"
-        );
+            await transaction
+                .request()
+                .input("id_ride_request", sql.Int, id_ride_request)
+                .query(`
+                    UPDATE RIDE_REQUEST
+                    SET status_request = 'cancelled'
+                    WHERE id_ride_request = @id_ride_request;
+                `);
+        }
+
+        // Approved requests can only be cancelled
+        // if their ride has not started yet
+        else if (request.status_request === "approved") {
+
+            if (request.id_ride === null) {
+                throw new Error(
+                    "Approved request is not associated with a ride"
+                );
+            }
+
+            const rideResult = await transaction
+                .request()
+                .input("id_ride", sql.Int, request.id_ride)
+                .query(`
+                    SELECT
+                        id_ride,
+                        status_ride,
+                        empty_seats,
+                        is_available
+                    FROM RIDE WITH (UPDLOCK, HOLDLOCK)
+                    WHERE id_ride = @id_ride;
+                `);
+
+            if (rideResult.recordset.length === 0) {
+                throw new Error("Associated ride not found");
+            }
+
+            const ride = rideResult.recordset[0];
+
+            if (ride.status_ride !== "active") {
+                throw new Error(
+                    "Approved ride requests can only be cancelled before the ride starts"
+                );
+            }
+
+            // Return the reserved seats to the ride
+            await transaction
+                .request()
+                .input("id_ride", sql.Int, request.id_ride)
+                .input("seats_needed", sql.Int, request.seats_needed)
+                .query(`
+                    UPDATE RIDE
+                    SET empty_seats = empty_seats + @seats_needed
+                    WHERE id_ride = @id_ride
+                      AND status_ride = 'active';
+                `);
+
+            // Cancel the approved request
+            await transaction
+                .request()
+                .input("id_ride_request", sql.Int, id_ride_request)
+                .query(`
+                    UPDATE RIDE_REQUEST
+                    SET status_request = 'cancelled'
+                    WHERE id_ride_request = @id_ride_request;
+                `);
+        }
+
+        else {
+            throw new Error(
+                "Ride request not found, already processed, or cannot be cancelled"
+            );
+        }
+
+        // Return the updated request
+        const result = await transaction
+            .request()
+            .input("id_ride_request", sql.Int, id_ride_request)
+            .query(`
+                SELECT
+                    id_ride_request,
+                    id_user,
+                    id_ride,
+                    seats_needed,
+                    creation_date_req,
+                    desired_time,
+                    desired_price,
+                    id_adresse_pickup,
+                    id_adresse_dropoff,
+                    status_request,
+                    payment_method,
+                    payment_status
+                FROM RIDE_REQUEST
+                WHERE id_ride_request = @id_ride_request;
+            `);
+
+        await transaction.commit();
+
+        return result.recordset[0];
+
+    } catch (error) {
+        try {
+            await transaction.rollback();
+        } catch (rollbackError) {
+            console.error("Rollback failed:", rollbackError);
+        }
+
+        throw error;
     }
-
-    return result.recordset[0];
 };
 
 
