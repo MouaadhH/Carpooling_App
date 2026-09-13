@@ -1,5 +1,7 @@
 const { sql , getPool } = require("../config/db");
 const { checkMinimumBalance } = require("./walletService");
+const { validateRidePrice } = require("./pricingService");
+const { checkDriverRideEligibility } = require("./driverRideEligibilityService");
 
 const createRide = async ({
     id_driver_posted,
@@ -12,6 +14,12 @@ const createRide = async ({
     empty_seats
 }) => {
     const pool = getPool();
+    
+    // Is the driver verified? Is the vehicle approved?
+    await checkDriverRideEligibility({
+    id_driver: id_driver_posted,
+    id_vehicile
+    });
 
     // Driver must have the minimum balance required to post a ride
     await checkMinimumBalance(id_driver_posted);
@@ -194,6 +202,7 @@ const getAvailableRides = async () => {
                 ON r.id_adresse_arrive = a2.id_adresse
 
             WHERE r.status_ride = 'active'
+              AND r.is_available = 1
               AND r.departure_time >= SYSDATETIME()
 
             ORDER BY r.departure_time ASC
@@ -260,21 +269,102 @@ const updateRide = async ({
     id_adresse_arrive,
     departure_time,
     distance,
+    prix_total,
     empty_seats
 }) => {
 
     const pool = getPool();
 
+    // Verify driver and vehicle eligibility
+    await checkDriverRideEligibility({
+        id_driver: id_driver_posted,
+        id_vehicile
+    });
+
+    // Validate price according to the new distance
+    const pricing = await validateRidePrice({
+        distance,
+        price: prix_total
+    });
+
+    const rideDistance = Number(distance);
+    if (!Number.isFinite(rideDistance) || rideDistance <= 0) {
+        throw new Error(
+            "Distance must be a valid positive number"
+        );
+    }
+    const ridePrice = pricing.price;
+    const rideEmptySeats = Number(empty_seats);
+
+    // Validate empty seats
+    if (
+        !Number.isInteger(rideEmptySeats) ||
+        rideEmptySeats < 0
+    ) {
+        throw new Error(
+            "empty_seats must be a valid non-negative integer"
+        );
+    }
+
+    // Get the current ride and approved passenger count
+    const rideResult = await pool
+        .request()
+        .input("id_ride", sql.Int, id_ride)
+        .input("id_driver_posted", sql.Int, id_driver_posted)
+        .query(`
+            SELECT
+                r.status_ride,
+                COUNT(
+                    CASE
+                        WHEN rr.status_request = 'approved'
+                        THEN 1
+                    END
+                ) AS approved_passengers
+            FROM RIDE r
+            LEFT JOIN RIDE_REQUEST rr
+                ON rr.id_ride = r.id_ride
+            WHERE r.id_ride = @id_ride
+              AND r.id_driver_posted = @id_driver_posted
+            GROUP BY r.status_ride;
+        `);
+
+    if (rideResult.recordset.length === 0) {
+        throw new Error(
+            "Ride not found or you are not the driver who posted it"
+        );
+    }
+
+    const ride = rideResult.recordset[0];
+
+    // Only active rides can be updated
+    if (ride.status_ride !== "active") {
+        throw new Error(
+            "Only active rides can be updated"
+        );
+    }
+
+    // Cannot reduce seats below already approved passengers
+    const approvedPassengers = Number(
+        ride.approved_passengers
+    );
+
+    if (rideEmptySeats < approvedPassengers) {
+        throw new Error(
+            `empty_seats cannot be less than the number of approved passengers (${approvedPassengers})`
+        );
+    }
+
     const result = await pool
         .request()
-        .input("id_ride", id_ride)
-        .input("id_driver_posted", id_driver_posted)
-        .input("id_vehicile", id_vehicile)
-        .input("id_adresse_start", id_adresse_start)
-        .input("id_adresse_arrive", id_adresse_arrive)
+        .input("id_ride", sql.Int, id_ride)
+        .input("id_driver_posted", sql.Int, id_driver_posted)
+        .input("id_vehicile", sql.Int, id_vehicile)
+        .input("id_adresse_start", sql.Int, id_adresse_start)
+        .input("id_adresse_arrive", sql.Int, id_adresse_arrive)
         .input("departure_time", departure_time)
-        .input("distance", distance)
-        .input("empty_seats", empty_seats)
+        .input("distance", sql.Decimal(10, 2), rideDistance)
+        .input("prix_total", sql.Decimal(10, 2), ridePrice)
+        .input("empty_seats", sql.Int, rideEmptySeats)
         .query(`
             UPDATE RIDE
             SET
@@ -283,9 +373,11 @@ const updateRide = async ({
                 id_adresse_arrive = @id_adresse_arrive,
                 departure_time = @departure_time,
                 distance = @distance,
+                prix_total = @prix_total,
                 empty_seats = @empty_seats
             WHERE id_ride = @id_ride
-              AND id_driver_posted = @id_driver_posted;
+              AND id_driver_posted = @id_driver_posted
+              AND status_ride = 'active';
 
             SELECT *
             FROM RIDE
@@ -445,15 +537,16 @@ const startRide = async ({ id_ride, id_driver }) => {
 
     const result = await pool
         .request()
-        .input("id_ride", id_ride)
-        .input("id_driver", id_driver)
+        .input("id_ride", sql.Int, id_ride)
+        .input("id_driver", sql.Int, id_driver)
         .query(`
             UPDATE RIDE
             SET status_ride = 'in_progress'
             WHERE id_ride = @id_ride
               AND id_driver_posted = @id_driver
               AND status_ride = 'active'
-              AND is_available = 0;
+              AND is_available = 0
+              AND departure_time <= SYSDATETIME();
 
             SELECT *
             FROM RIDE
@@ -471,6 +564,7 @@ const startRide = async ({ id_ride, id_driver }) => {
 
 const updateRideLocation = async ({
     id_ride,
+    id_driver,
     latitude,
     longitude
 }) => {
@@ -494,6 +588,7 @@ const updateRideLocation = async ({
     const rideResult = await pool
         .request()
         .input("id_ride", sql.Int, id_ride)
+        .input("id_driver", sql.Int, id_driver)
         .query(`
             SELECT
                 id_ride,
@@ -502,6 +597,7 @@ const updateRideLocation = async ({
                 id_adresse_arrive
             FROM RIDE
             WHERE id_ride = @id_ride
+             AND id_driver_posted = @id_driver
         `);
 
     if (rideResult.recordset.length === 0) {
