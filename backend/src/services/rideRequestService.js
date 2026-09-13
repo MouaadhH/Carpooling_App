@@ -1,7 +1,7 @@
 const { getPool, sql } = require("../config/db");
 const { checkMinimumBalance } = require("./walletService");
 const { validateRidePrice } = require("./pricingService");
-
+const { checkDriverRideEligibility } = require("./driverRideEligibilityService");
 
 // ============================================================
 // GET DISTANCE BETWEEN TWO ADDRESSES
@@ -485,24 +485,18 @@ const acceptOpenRideRequest = async ({
 }) => {
 
     const pool = getPool();
-
     const transaction = new sql.Transaction(pool);
 
     try {
-
         await transaction.begin();
 
-        // ----------------------------------------------------
         // Lock the open request
-        // ----------------------------------------------------
-
         const requestResult = await new sql.Request(transaction)
             .input("id_ride_request", sql.Int, id_ride_request)
             .query(`
-                SELECT
-                    *
+                SELECT *
                 FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
-                WHERE id_ride_request = @id_ride_request
+                WHERE id_ride_request = @id_ride_request;
             `);
 
         if (requestResult.recordset.length === 0) {
@@ -511,81 +505,43 @@ const acceptOpenRideRequest = async ({
 
         const request = requestResult.recordset[0];
 
-        // ----------------------------------------------------
         // Request must still be pending
-        // ----------------------------------------------------
-
         if (request.status_request !== "pending") {
             throw new Error("Ride request is no longer pending");
         }
 
-        // ----------------------------------------------------
         // It must still be an open request
-        // ----------------------------------------------------
-
         if (request.id_ride !== null) {
             throw new Error("Ride request is already linked to a ride");
         }
 
-        // ----------------------------------------------------
         // Passenger cannot become their own driver
-        // ----------------------------------------------------
-
         if (Number(request.id_user) === Number(id_driver)) {
             throw new Error("Passenger cannot accept their own request");
         }
 
-        // ----------------------------------------------------
         // Validate addresses
-        // ----------------------------------------------------
-
         if (!request.id_adresse_pickup || !request.id_adresse_dropoff) {
             throw new Error("Ride request addresses are required");
         }
 
-        // ----------------------------------------------------
-        // Find driver's vehicle
-        // ----------------------------------------------------
+        // Check driver eligibility and get an approved vehicle
+        const { id_vehicile } = await checkDriverRideEligibility({
+            id_driver,
+            transaction
+        });
 
-        const vehicleResult = await new sql.Request(transaction)
-            .input("id_driver", sql.Int, id_driver)
-            .query(`
-                SELECT TOP 1
-                    v.id_vehicile
-                FROM VEHICLE v
-                INNER JOIN DRIVER_PROFILE dp
-                    ON v.id_profile = dp.id_profile
-                WHERE dp.id_driver = @id_driver
-                  AND v.verification_status = 'approved'
-                ORDER BY v.id_vehicile;
-            `);
-
-        if (vehicleResult.recordset.length === 0) {
-            throw new Error("Driver does not have an approved vehicle");
-        }
-
-        const id_vehicile = vehicleResult.recordset[0].id_vehicile;
-
-        // ----------------------------------------------------
         // Check driver's minimum balance
-        // ----------------------------------------------------
-
         await checkMinimumBalance(id_driver, transaction);
 
-        // ----------------------------------------------------
         // Calculate actual distance
-        // ----------------------------------------------------
-
         const distance = await getDistanceBetweenAddresses({
             id_adresse_start: request.id_adresse_pickup,
             id_adresse_arrive: request.id_adresse_dropoff,
             transaction
         });
 
-        // ----------------------------------------------------
-        // Revalidate requested price against current tariff
-        // ----------------------------------------------------
-
+        // Validate requested price against current tariff
         const priceValidation = await validateRidePrice({
             distance,
             price: request.desired_price
@@ -593,11 +549,8 @@ const acceptOpenRideRequest = async ({
 
         const lockedPrice = priceValidation.price;
 
-        // ----------------------------------------------------
         // Create the ride
-        // ----------------------------------------------------
-
-                const rideResult = await new sql.Request(transaction)
+        const rideResult = await new sql.Request(transaction)
             .input("id_driver_posted", sql.Int, id_driver)
             .input("id_vehicile", sql.Int, id_vehicile)
             .input("id_adresse_start", sql.Int, request.id_adresse_pickup)
@@ -663,15 +616,17 @@ const acceptOpenRideRequest = async ({
                     1
                 );
 
-                SELECT * FROM @InsertedRide;
+                SELECT *
+                FROM @InsertedRide;
             `);
+
+        if (rideResult.recordset.length === 0) {
+            throw new Error("Failed to create ride");
+        }
 
         const newRide = rideResult.recordset[0];
 
-        // ----------------------------------------------------
         // Link the request to the newly created ride
-        // ----------------------------------------------------
-
         const updateRequestResult = await new sql.Request(transaction)
             .input("id_ride_request", sql.Int, id_ride_request)
             .input("id_ride", sql.Int, newRide.id_ride)
@@ -710,10 +665,17 @@ const acceptOpenRideRequest = async ({
                     INSERTED.payment_method,
                     INSERTED.payment_status
                 INTO @UpdatedRequest
-                WHERE id_ride_request = @id_ride_request;
+                WHERE id_ride_request = @id_ride_request
+                  AND status_request = 'pending'
+                  AND id_ride IS NULL;
 
-                SELECT * FROM @UpdatedRequest;
+                SELECT *
+                FROM @UpdatedRequest;
             `);
+
+        if (updateRequestResult.recordset.length === 0) {
+            throw new Error("Failed to link ride request to ride");
+        }
 
         await transaction.commit();
 
