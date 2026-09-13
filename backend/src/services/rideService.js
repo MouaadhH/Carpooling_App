@@ -288,13 +288,15 @@ const updateRide = async ({
     });
 
     const rideDistance = Number(distance);
+    const ridePrice = pricing.price;
+    const rideEmptySeats = Number(empty_seats);
+
+    // Validate distance
     if (!Number.isFinite(rideDistance) || rideDistance <= 0) {
         throw new Error(
             "Distance must be a valid positive number"
         );
     }
-    const ridePrice = pricing.price;
-    const rideEmptySeats = Number(empty_seats);
 
     // Validate empty seats
     if (
@@ -306,7 +308,7 @@ const updateRide = async ({
         );
     }
 
-    // Get the current ride and approved passenger count
+    // Get current ride and approved passenger count
     const rideResult = await pool
         .request()
         .input("id_ride", sql.Int, id_ride)
@@ -314,6 +316,7 @@ const updateRide = async ({
         .query(`
             SELECT
                 r.status_ride,
+                r.is_available,
                 COUNT(
                     CASE
                         WHEN rr.status_request = 'approved'
@@ -325,7 +328,9 @@ const updateRide = async ({
                 ON rr.id_ride = r.id_ride
             WHERE r.id_ride = @id_ride
               AND r.id_driver_posted = @id_driver_posted
-            GROUP BY r.status_ride;
+            GROUP BY
+                r.status_ride,
+                r.is_available;
         `);
 
     if (rideResult.recordset.length === 0) {
@@ -354,6 +359,17 @@ const updateRide = async ({
         );
     }
 
+    /*
+        If there are no seats left, the ride must become unavailable.
+
+        If seats are available, preserve the driver's current
+        availability choice.
+    */
+    const isAvailable =
+        rideEmptySeats === 0
+            ? 0
+            : Number(ride.is_available);
+
     const result = await pool
         .request()
         .input("id_ride", sql.Int, id_ride)
@@ -361,10 +377,11 @@ const updateRide = async ({
         .input("id_vehicile", sql.Int, id_vehicile)
         .input("id_adresse_start", sql.Int, id_adresse_start)
         .input("id_adresse_arrive", sql.Int, id_adresse_arrive)
-        .input("departure_time", departure_time)
+        .input("departure_time", sql.DateTime2, departure_time)
         .input("distance", sql.Decimal(10, 2), rideDistance)
         .input("prix_total", sql.Decimal(10, 2), ridePrice)
         .input("empty_seats", sql.Int, rideEmptySeats)
+        .input("is_available", sql.Bit, isAvailable)
         .query(`
             UPDATE RIDE
             SET
@@ -374,7 +391,8 @@ const updateRide = async ({
                 departure_time = @departure_time,
                 distance = @distance,
                 prix_total = @prix_total,
-                empty_seats = @empty_seats
+                empty_seats = @empty_seats,
+                is_available = @is_available
             WHERE id_ride = @id_ride
               AND id_driver_posted = @id_driver_posted
               AND status_ride = 'active';
