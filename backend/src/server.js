@@ -41,8 +41,24 @@ app.use("/api/conversations", conversationRoutes);
 app.use("/api/conversations", messageRoutes);
 app.use("/api/vehicles", vehicleRoutes);
 app.use("/api/drivers", driverProfileRoutes);
-connectDB();
 
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-});
+
+const startServer = async () => {
+    try {
+        await connectDB();
+
+        app.listen(PORT, () => {
+            console.log(
+                `Server running on http://localhost:${PORT}`
+            );
+        });
+    } catch (error) {
+        console.error(
+            "Server startup failed because the database connection failed."
+        );
+
+        process.exit(1);
+    }
+};
+
+startServer();
