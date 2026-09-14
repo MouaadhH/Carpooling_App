@@ -153,6 +153,25 @@ const createRideRequest = async ({
         if (ride.status_ride !== "active") {
             throw new Error("Ride is not active");
         }
+        
+        // ----------------------------------------------------
+        // Check for duplicate requests
+        // ----------------------------------------------------
+
+        const duplicateCheck = await new sql.Request(transaction)
+           .input("id_user", sql.Int, id_user)
+           .input("id_ride", sql.Int, id_ride)
+           .query(`
+               SELECT id_ride_request
+               FROM RIDE_REQUEST
+               WHERE id_user = @id_user
+                 AND id_ride = @id_ride
+                 AND status_request IN ('pending', 'approved')
+           `);
+       
+                if (duplicateCheck.recordset.length > 0) {
+                    throw new Error("You already have an active request for this ride");
+        }    
 
         // ----------------------------------------------------
         // Ride must have enough seats
@@ -541,13 +560,14 @@ const acceptOpenRideRequest = async ({
             transaction
         });
 
-        // Validate requested price against current tariff
-        const priceValidation = await validateRidePrice({
-            distance,
-            price: request.desired_price
-        });
+       const lockedPrice = Number(request.desired_price);
 
-        const lockedPrice = priceValidation.price;
+        if (
+            !Number.isFinite(lockedPrice) ||
+            lockedPrice <= 0
+        ) {
+            throw new Error("Ride request has an invalid desired price");
+        }
 
         // Create the ride
         const rideResult = await new sql.Request(transaction)
