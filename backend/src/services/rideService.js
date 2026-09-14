@@ -24,70 +24,47 @@ const createRide = async ({
     // Driver must have the minimum balance required to post a ride
     await checkMinimumBalance(id_driver_posted);
 
-    // Convert numeric values
-    const rideDistance = Number(distance);
-    const ridePrice = Number(prix_total);
 
-    // Validate distance
-    if (!Number.isFinite(rideDistance) || rideDistance <= 0) {
-        throw new Error("Distance must be a valid positive number");
-    }
-
-    // Validate price
-    if (!Number.isFinite(ridePrice) || ridePrice < 0) {
-        throw new Error("prix_total must be a valid positive number");
-    }
-
-    /*
-        Get the current tariff configuration.
-
-        We use the latest configuration because the allowed
-        price range can change when the admin changes tariffs.
-    */
-   
-    const tariffResult = await pool
-        .request()
+    // Validate vehicle ownership and approval status
+    const vehicleResult = await pool.request()
+        .input("id_vehicile", sql.Int, id_vehicile)
+        .input("id_driver_posted", sql.Int, id_driver_posted)
         .query(`
-            SELECT TOP 1
-                suggested_price_perKM,
-                min_price_perKM,
-                max_price_perKM,
-                commision_percentage,
-                min_balance_toride
-            FROM TARIF_CONFIGURATION
-            ORDER BY updated_at DESC
+            SELECT v.id_vehicile, v.number_of_seats, v.verification_status
+            FROM VEHICLE v
+            INNER JOIN DRIVER_PROFILE dp ON v.id_profile = dp.id_profile
+            WHERE v.id_vehicile = @id_vehicile
+              AND dp.id_driver = @id_driver_posted
         `);
-
-    if (tariffResult.recordset.length === 0) {
-        throw new Error("Tarif configuration not found");
+    
+    if (vehicleResult.recordset.length === 0) {
+        throw new Error("Vehicle not found or does not belong to you");
     }
-
-    const tariff = tariffResult.recordset[0];
-
-    const minPricePerKM = Number(tariff.min_price_perKM);
-    const maxPricePerKM = Number(tariff.max_price_perKM);
-
-    if (
-        !Number.isFinite(minPricePerKM) ||
-        !Number.isFinite(maxPricePerKM)
-    ) {
-        throw new Error("Invalid tariff configuration");
+    
+    const vehicle = vehicleResult.recordset[0];
+    
+    if (vehicle.verification_status !== "approved") {
+        throw new Error("Vehicle must be approved before it can be used for a ride");
     }
-
-    // Calculate allowed total-price range for this ride
-    const minimumPrice = minPricePerKM * rideDistance;
-    const maximumPrice = maxPricePerKM * rideDistance;
-
-    // Validate driver's chosen price
-    if (
-        ridePrice < minimumPrice ||
-        ridePrice > maximumPrice
-    ) {
+    
+    if (Number(empty_seats) > Number(vehicle.number_of_seats)) {
         throw new Error(
-            `prix_total must be between ${minimumPrice.toFixed(2)} DA and ${maximumPrice.toFixed(2)} DA`
+            `empty_seats cannot exceed the vehicle's capacity (${vehicle.number_of_seats})`
         );
     }
 
+    
+    // Convert numeric values
+    const rideDistance = Number(distance);
+    
+    // Validate and lock the driver's price
+    const pricing = await validateRidePrice({
+        distance: rideDistance,
+        price: prix_total
+    });
+    
+    const ridePrice = pricing.price;
+   
         // Create the ride
     const result = await pool
         .request()
@@ -557,32 +534,218 @@ const updateRideAvailability = async ({
 const startRide = async ({ id_ride, id_driver }) => {
 
     const pool = getPool();
+    const transaction = new sql.Transaction(pool);
 
-    const result = await pool
-        .request()
-        .input("id_ride", sql.Int, id_ride)
-        .input("id_driver", sql.Int, id_driver)
-        .query(`
-            UPDATE RIDE
-            SET status_ride = 'in_progress'
-            WHERE id_ride = @id_ride
-              AND id_driver_posted = @id_driver
-              AND status_ride = 'active'
-              AND is_available = 0
-              AND departure_time <= SYSDATETIME();
+    try {
 
-            SELECT *
-            FROM RIDE
-            WHERE id_ride = @id_ride;
-        `);
+        await transaction.begin();
 
-    if (result.recordset.length === 0) {
-        throw new Error(
-            "Ride not found or ride cannot be started"
+        // --------------------------------------------------
+        // Lock the ride
+        // --------------------------------------------------
+
+        const rideResult = await new sql.Request(transaction)
+            .input("id_ride", sql.Int, id_ride)
+            .input("id_driver", sql.Int, id_driver)
+            .query(`
+                SELECT
+                    id_ride,
+                    id_driver_posted,
+                    prix_total,
+                    status_ride,
+                    is_available,
+                    departure_time
+                FROM RIDE WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride = @id_ride
+                  AND id_driver_posted = @id_driver
+            `);
+
+        if (rideResult.recordset.length === 0) {
+            throw new Error(
+                "Ride not found or you are not the driver who posted it"
+            );
+        }
+
+        const ride = rideResult.recordset[0];
+
+        // --------------------------------------------------
+        // Validate ride state
+        // --------------------------------------------------
+
+        if (ride.status_ride !== "active") {
+            throw new Error(
+                "Only active rides can be started"
+            );
+        }
+
+        if (Number(ride.is_available) !== 0) {
+            throw new Error(
+                "Ride must be unavailable before it can be started"
+            );
+        }
+
+        if (new Date(ride.departure_time) > new Date()) {
+            throw new Error(
+                "Ride cannot be started before departure time"
+            );
+        }
+
+        // --------------------------------------------------
+        // Count occupied seats
+        // --------------------------------------------------
+
+        const passengersResult = await new sql.Request(transaction)
+            .input("id_ride", sql.Int, id_ride)
+            .query(`
+                SELECT
+                    COALESCE(SUM(seats_needed), 0)
+                    AS occupied_seats
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride = @id_ride
+                  AND status_request = 'approved'
+            `);
+
+        const occupiedSeats = Number(
+            passengersResult.recordset[0].occupied_seats
         );
-    }
 
-    return result.recordset[0];
+        if (occupiedSeats <= 0) {
+            throw new Error(
+                "Cannot start a ride with no approved passengers"
+            );
+        }
+
+        // --------------------------------------------------
+        // Get current commission percentage
+        // --------------------------------------------------
+
+        const tariffResult = await new sql.Request(transaction)
+            .query(`
+                SELECT TOP 1
+                    commision_percentage
+                FROM TARIF_CONFIGURATION
+                ORDER BY updated_at DESC
+            `);
+
+        if (tariffResult.recordset.length === 0) {
+            throw new Error(
+                "Tarif configuration not found"
+            );
+        }
+
+        const commissionPercentage = Number(
+            tariffResult.recordset[0].commision_percentage
+        );
+
+        if (
+            !Number.isFinite(commissionPercentage) ||
+            commissionPercentage < 0
+        ) {
+            throw new Error(
+                "Invalid commission configuration"
+            );
+        }
+
+        // --------------------------------------------------
+        // Calculate expected commission
+        // --------------------------------------------------
+
+        const ridePrice = Number(ride.prix_total);
+
+        if (
+            !Number.isFinite(ridePrice) ||
+            ridePrice <= 0
+        ) {
+            throw new Error(
+                "Ride has an invalid price"
+            );
+        }
+
+        const expectedCommission =
+            (ridePrice * commissionPercentage / 100) *
+            occupiedSeats;
+
+        // --------------------------------------------------
+        // Lock driver's wallet
+        // --------------------------------------------------
+
+        const walletResult = await new sql.Request(transaction)
+            .input(
+                "id_driver",
+                sql.Int,
+                ride.id_driver_posted
+            )
+            .query(`
+                SELECT
+                    id_wallet,
+                    balance
+                FROM WALLET WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_user = @id_driver
+            `);
+
+        if (walletResult.recordset.length === 0) {
+            throw new Error(
+                "Driver wallet not found"
+            );
+        }
+
+        const wallet = walletResult.recordset[0];
+
+        const currentBalance = Number(wallet.balance);
+
+        if (
+            !Number.isFinite(currentBalance) ||
+            currentBalance < expectedCommission
+        ) {
+            throw new Error(
+                `Insufficient driver wallet balance for commission. Required: ${expectedCommission.toFixed(2)} DA, available: ${currentBalance.toFixed(2)} DA`
+            );
+        }
+
+        // --------------------------------------------------
+        // Start the ride
+        // --------------------------------------------------
+
+        const updateResult = await new sql.Request(transaction)
+            .input("id_ride", sql.Int, id_ride)
+            .query(`
+                UPDATE RIDE
+                SET status_ride = 'in_progress'
+                WHERE id_ride = @id_ride
+                  AND status_ride = 'active'
+                  AND is_available = 0
+            `);
+
+        if (updateResult.rowsAffected[0] !== 1) {
+            throw new Error(
+                "Ride could not be started"
+            );
+        }
+
+        // --------------------------------------------------
+        // Get final ride state
+        // --------------------------------------------------
+
+        const finalResult = await new sql.Request(transaction)
+            .input("id_ride", sql.Int, id_ride)
+            .query(`
+                SELECT *
+                FROM RIDE
+                WHERE id_ride = @id_ride
+            `);
+
+        await transaction.commit();
+
+        return finalResult.recordset[0];
+
+    } catch (error) {
+
+        try {
+            await transaction.rollback();
+        } catch (_) {}
+
+        throw error;
+    }
 };
 
 const updateRideLocation = async ({
