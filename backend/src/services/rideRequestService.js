@@ -670,7 +670,8 @@ const acceptOpenRideRequest = async ({
                 UPDATE RIDE_REQUEST
                 SET
                     id_ride = @id_ride,
-                    desired_price = @locked_price
+                    desired_price = @locked_price,
+                    status_request = 'approved'
                 OUTPUT
                     INSERTED.id_ride_request,
                     INSERTED.id_user,

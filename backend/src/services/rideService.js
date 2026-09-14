@@ -16,36 +16,15 @@ const createRide = async ({
     const pool = getPool();
     
     // Is the driver verified? Is the vehicle approved?
-    await checkDriverRideEligibility({
-    id_driver: id_driver_posted,
-    id_vehicile
+    const vehicle = await checkDriverRideEligibility({
+     id_driver: id_driver_posted,
+     id_vehicile
     });
 
     // Driver must have the minimum balance required to post a ride
     await checkMinimumBalance(id_driver_posted);
 
 
-    // Validate vehicle ownership and approval status
-    const vehicleResult = await pool.request()
-        .input("id_vehicile", sql.Int, id_vehicile)
-        .input("id_driver_posted", sql.Int, id_driver_posted)
-        .query(`
-            SELECT v.id_vehicile, v.number_of_seats, v.verification_status
-            FROM VEHICLE v
-            INNER JOIN DRIVER_PROFILE dp ON v.id_profile = dp.id_profile
-            WHERE v.id_vehicile = @id_vehicile
-              AND dp.id_driver = @id_driver_posted
-        `);
-    
-    if (vehicleResult.recordset.length === 0) {
-        throw new Error("Vehicle not found or does not belong to you");
-    }
-    
-    const vehicle = vehicleResult.recordset[0];
-    
-    if (vehicle.verification_status !== "approved") {
-        throw new Error("Vehicle must be approved before it can be used for a ride");
-    }
     
     if (Number(empty_seats) > Number(vehicle.number_of_seats)) {
         throw new Error(
@@ -445,7 +424,7 @@ const cancelRide = async ({ id_ride, id_driver }) => {
                 UPDATE RIDE_REQUEST
                 SET status_request = 'cancelled'
                 WHERE id_ride = @id_ride
-                  AND status_request IN ('approved', 'pending')
+                  AND status_request = 'approved'
             `);
 
         // 5. Get the final ride state.
