@@ -342,12 +342,6 @@ const updateRide = async ({
         );
     }
 
-    if (rideEmptySeats < approvedSeats) {
-        throw new Error(
-            `empty_seats cannot be less than the number of approved seats (${approvedSeats})`
-        );
-    }
-
     const ride = rideResult.recordset[0];
 
     // Only active rides can be updated
@@ -456,7 +450,7 @@ const cancelRide = async ({ id_ride, id_driver }) => {
         // 3. Cancel the ride.
         await new sql.Request(transaction)
             .input("id_ride", id_ride)
-            .input
+            .input("id_driver", id_driver)
             .query(`
                 UPDATE RIDE
                 SET
@@ -743,10 +737,11 @@ const updateRideLocation = async ({
         const passengersResult = await new sql.Request(transaction)
             .input("id_ride", sql.Int, id_ride)
             .query(`
-                SELECT COUNT(*) AS number_of_passengers
+                SELECT
+                 COALESCE(SUM(seats_needed), 0) AS number_of_passengers
                 FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
                 WHERE id_ride = @id_ride
-                  AND status_request = 'approved'
+                 AND status_request = 'approved'
             `);
 
         const numberOfPassengers = Number(
