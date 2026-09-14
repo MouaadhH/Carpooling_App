@@ -490,6 +490,5 @@ module.exports = {
     rejectRideRequestController,
     cancelRideRequestController,
     updatePaymentMethodController,
-    payRideRequestController,
-    updatePaymentMethodController
+    payRideRequestController
 };
