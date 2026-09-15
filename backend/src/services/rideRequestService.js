@@ -343,6 +343,10 @@ const createOpenRideRequest = async ({
         distance,
         price: desired_price
     });
+    
+
+    const pricePerSeat = priceValidation.price;
+    const passengerTotal = pricePerSeat * Number(seats_needed);
 
     const pool = getPool();
 
@@ -355,7 +359,7 @@ const createOpenRideRequest = async ({
     .input("id_user", sql.Int, id_user)
     .input("seats_needed", sql.Int, Number(seats_needed))
     .input("desired_time", sql.DateTime2, desired_time || null)
-    .input("desired_price", sql.Decimal(10, 2), priceValidation.price)
+    .input("desired_price", sql.Decimal(10, 2), passengerTotal)
     .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
     .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
     .query(`

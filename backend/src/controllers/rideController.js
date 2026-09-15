@@ -122,22 +122,24 @@ const updateRideController = async (req, res) => {
             id_adresse_arrive,
             departure_time,
             distance,
+            prix_total,
             empty_seats
         } = req.body;
 
         // Validate required fields BEFORE updating the database
         if (
-            id_vehicile === undefined ||
-            id_adresse_start === undefined ||
-            id_adresse_arrive === undefined ||
-            departure_time === undefined ||
-            distance === undefined ||
-            empty_seats === undefined
-        ) {
-            return res.status(400).json({
-                message: "Required fields are missing"
-            });
-        }
+           id_vehicile === undefined ||
+           id_adresse_start === undefined ||
+           id_adresse_arrive === undefined ||
+           departure_time === undefined ||
+           distance === undefined ||
+           prix_total === undefined ||
+           empty_seats === undefined
+       ) {
+       return res.status(400).json({
+           message: "Required fields are missing"
+       });
+}
 
         // Get the driver from the JWT
         const id_driver_posted = req.user.id_user;
@@ -150,6 +152,7 @@ const updateRideController = async (req, res) => {
             id_adresse_arrive,
             departure_time,
             distance,
+            prix_total,
             empty_seats
         });
 
@@ -167,7 +170,7 @@ const updateRideController = async (req, res) => {
     } catch (error) {
         console.error("UPDATE RIDE ERROR:", error);
 
-        return res.status(500).json({
+        return res.status(400).json({
             message: "Failed to update ride",
             error: error.message
         });

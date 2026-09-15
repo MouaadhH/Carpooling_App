@@ -26,9 +26,15 @@ const createRide = async ({
 
 
     
-    if (Number(empty_seats) > Number(vehicle.number_of_seats)) {
+    const rideEmptySeats = Number(empty_seats);
+
+    if (
+        !Number.isInteger(rideEmptySeats) ||
+        rideEmptySeats < 0 ||
+        rideEmptySeats > Number(vehicle.number_of_seats)
+    ) {
         throw new Error(
-            `empty_seats cannot exceed the vehicle's capacity (${vehicle.number_of_seats})`
+            `empty_seats must be an integer between 0 and ${vehicle.number_of_seats}`
         );
     }
 
@@ -54,24 +60,9 @@ const createRide = async ({
         .input("departure_time", departure_time)
         .input("distance", rideDistance)
         .input("prix_total", ridePrice)
-        .input("empty_seats", empty_seats)
+        .input("empty_seats", rideEmptySeats)
         .query(`
-            DECLARE @InsertedRide TABLE (
-                id_ride INT,
-                prix_total DECIMAL(10,2),
-                distance DECIMAL(10,2),
-                empty_seats INT,
-                departure_time DATETIME2,
-                status_ride NVARCHAR(20),
-                commission DECIMAL(10,2),
-                creation_date_ride DATETIME2,
-                id_driver_posted INT,
-                id_vehicile INT,
-                id_adresse_start INT,
-                id_adresse_arrive INT,
-                is_available BIT
-            );
-
+            DECLARE @newId INT;
             INSERT INTO RIDE
             (
                 prix_total,
@@ -83,21 +74,6 @@ const createRide = async ({
                 id_adresse_start,
                 id_adresse_arrive
             )
-            OUTPUT
-                INSERTED.id_ride,
-                INSERTED.prix_total,
-                INSERTED.distance,
-                INSERTED.empty_seats,
-                INSERTED.departure_time,
-                INSERTED.status_ride,
-                INSERTED.commission,
-                INSERTED.creation_date_ride,
-                INSERTED.id_driver_posted,
-                INSERTED.id_vehicile,
-                INSERTED.id_adresse_start,
-                INSERTED.id_adresse_arrive,
-                INSERTED.is_available
-            INTO @InsertedRide
             VALUES
             (
                 @prix_total,
@@ -109,8 +85,12 @@ const createRide = async ({
                 @id_adresse_start,
                 @id_adresse_arrive
             );
-
-            SELECT * FROM @InsertedRide;
+            
+            SET @newId = SCOPE_IDENTITY();
+            
+            SELECT *
+            FROM RIDE
+            WHERE id_ride = @newId;
         `);
 
     return result.recordset[0];
