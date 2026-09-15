@@ -1,53 +1,79 @@
-const { sql , getPool } = require("../config/db");
+const express = require("express");
+
+const {
+    createDriverProfileController,
+    getMyDriverProfileController,
+    updateDriverProfileController,
+    getPendingDriversController,
+    getDriverForVerificationController,
+    verifyDriverController,
+    rejectDriverController
+} = require("../controllers/driverProfileController");
+
+const {
+    authenticateToken
+} = require("../middleware/authMiddleware");
+
+const {
+    authorizeRoles
+} = require("../middleware/roleMiddleware");
+
+const router = express.Router();
 
 
-const checkDriverRideEligibility = async ({
-    id_driver,
-    id_vehicile
-}) => {
-    const pool = getPool();
+// ==================== DRIVER ====================
 
-    const result = await pool
-        .request()
-        .input("id_driver", sql.Int, id_driver)
-        .input("id_vehicile", sql.Int, id_vehicile)
-        .query(`
-            SELECT
-                dp.is_verified AS driver_verified,
-                v.verification_status AS vehicle_status
-            FROM DRIVER_PROFILE dp
-            INNER JOIN VEHICLE v
-                ON v.id_profile = dp.id_profile
-            WHERE dp.id_driver = @id_driver
-              AND v.id_vehicile = @id_vehicile;
-        `);
+router.post(
+    "/profile",
+    authenticateToken,
+    authorizeRoles("driver"),
+    createDriverProfileController
+);
 
-    if (result.recordset.length === 0) {
-        throw new Error(
-            "Vehicle not found or you are not the owner"
-        );
-    }
+router.get(
+    "/profile",
+    authenticateToken,
+    authorizeRoles("driver"),
+    getMyDriverProfileController
+);
 
-    const eligibility = result.recordset[0];
+router.put(
+    "/profile",
+    authenticateToken,
+    authorizeRoles("driver"),
+    updateDriverProfileController
+);
 
-    if (
-        eligibility.driver_verified !== true &&
-        Number(eligibility.driver_verified) !== 1
-    ) {
-        throw new Error(
-            "Driver profile must be verified before posting a ride"
-        );
-    }
 
-    if (eligibility.vehicle_status !== "approved") {
-        throw new Error(
-            "Vehicle must be approved before posting a ride"
-        );
-    }
+// ==================== ADMIN ====================
 
-    return true;
-};
+router.get(
+    "/admin/unverified",
+    authenticateToken,
+    authorizeRoles("admin"),
+    getPendingDriversController
+);
 
-module.exports = {
-    checkDriverRideEligibility
-};
+router.get(
+    "/admin/:id/profile",
+    authenticateToken,
+    authorizeRoles("admin"),
+    getDriverForVerificationController
+);
+
+router.patch(
+    "/admin/:id/verify",
+    authenticateToken,
+    authorizeRoles("admin"),
+    verifyDriverController
+);
+
+router.patch(
+    "/admin/:id/reject",
+    authenticateToken,
+    authorizeRoles("admin"),
+    rejectDriverController
+);
+
+
+module.exports = router;
