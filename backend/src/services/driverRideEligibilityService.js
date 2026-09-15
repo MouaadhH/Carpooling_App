@@ -1,79 +1,68 @@
-const express = require("express");
-
-const {
-    createDriverProfileController,
-    getMyDriverProfileController,
-    updateDriverProfileController,
-    getPendingDriversController,
-    getDriverForVerificationController,
-    verifyDriverController,
-    rejectDriverController
-} = require("../controllers/driverProfileController");
-
-const {
-    authenticateToken
-} = require("../middleware/authMiddleware");
-
-const {
-    authorizeRoles
-} = require("../middleware/roleMiddleware");
-
-const router = express.Router();
 
 
-// ==================== DRIVER ====================
+const { sql, getPool } = require("../config/db");
 
-router.post(
-    "/profile",
-    authenticateToken,
-    authorizeRoles("driver"),
-    createDriverProfileController
-);
+const checkDriverRideEligibility = async ({
+    id_driver,
+    id_vehicile
+}) => {
+    const pool = getPool();
 
-router.get(
-    "/profile",
-    authenticateToken,
-    authorizeRoles("driver"),
-    getMyDriverProfileController
-);
+    const result = await pool
+        .request()
+        .input("id_driver", sql.Int, id_driver)
+        .input("id_vehicile", sql.Int, id_vehicile)
+        .query(`
+            SELECT
+                dp.is_verified AS driver_verified,
+                v.id_vehicile,
+                v.number_of_seats,
+                v.verification_status AS vehicle_status
+            FROM DRIVER_PROFILE dp
+            INNER JOIN VEHICLE v
+                ON v.id_profile = dp.id_profile
+            WHERE dp.id_driver = @id_driver
+              AND v.id_vehicile = @id_vehicile;
+        `);
 
-router.put(
-    "/profile",
-    authenticateToken,
-    authorizeRoles("driver"),
-    updateDriverProfileController
-);
+    if (result.recordset.length === 0) {
+        throw new Error(
+            "Vehicle not found or you are not the owner"
+        );
+    }
 
+    const eligibility = result.recordset[0];
 
-// ==================== ADMIN ====================
+    if (
+        eligibility.driver_verified !== true &&
+        Number(eligibility.driver_verified) !== 1
+    ) {
+        throw new Error(
+            "Driver profile must be verified before posting a ride"
+        );
+    }
 
-router.get(
-    "/admin/unverified",
-    authenticateToken,
-    authorizeRoles("admin"),
-    getPendingDriversController
-);
+    if (eligibility.vehicle_status !== "approved") {
+        throw new Error(
+            "Vehicle must be approved before posting a ride"
+        );
+    }
 
-router.get(
-    "/admin/:id/profile",
-    authenticateToken,
-    authorizeRoles("admin"),
-    getDriverForVerificationController
-);
+    if (
+        !Number.isInteger(Number(eligibility.number_of_seats)) ||
+        Number(eligibility.number_of_seats) <= 0
+    ) {
+        throw new Error(
+            "Vehicle must have a valid number of seats"
+        );
+    }
 
-router.patch(
-    "/admin/:id/verify",
-    authenticateToken,
-    authorizeRoles("admin"),
-    verifyDriverController
-);
+    return {
+        id_vehicile: eligibility.id_vehicile,
+        number_of_seats: Number(eligibility.number_of_seats)
+    };
+};
 
-router.patch(
-    "/admin/:id/reject",
-    authenticateToken,
-    authorizeRoles("admin"),
-    rejectDriverController
-);
-
-
-module.exports = router;
+module.exports = {
+    checkDriverRideEligibility
+};
