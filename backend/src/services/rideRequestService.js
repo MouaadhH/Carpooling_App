@@ -154,6 +154,18 @@ const createRideRequest = async ({
             throw new Error("Ride is not active");
         }
         
+        //----------------------------------------------------
+        // Ride must not have already departed
+        //----------------------------------------------------
+
+        if (ride.status_ride !== "active") {
+          throw new Error("Ride is not active");
+        }
+
+        if (new Date(ride.departure_time) <= new Date()) {
+         throw new Error("Ride has already departed");
+        }
+        
         // ----------------------------------------------------
         // Check for duplicate requests
         // ----------------------------------------------------
@@ -1465,6 +1477,44 @@ const approveRideRequest = async ({
         }
 
         // ----------------------------------------------------
+        // Departure time negotiation
+        //
+        // - No approved passengers yet -> driver adopting this
+        //   request also adopts its desired_time as the new
+        //   RIDE.departure_time.
+        // - Already has an approved passenger -> departure_time
+        //   is locked. A request whose desired_time doesn't match
+        //   it can't be approved.
+        // ----------------------------------------------------
+
+        const approvedCountResult = await new sql.Request(transaction)
+            .input("id_ride", sql.Int, request.id_ride)
+            .query(`
+                SELECT COUNT(*) AS approvedCount
+                FROM RIDE_REQUEST
+                WHERE id_ride = @id_ride
+                  AND status_request = 'approved'
+            `);
+
+        const isFirstApprovedPassenger =
+            approvedCountResult.recordset[0].approvedCount === 0;
+
+        let newDepartureTime = ride.departure_time;
+
+        if (isFirstApprovedPassenger) {
+            newDepartureTime = request.desired_time;
+        } else {
+            const requestedTime = new Date(request.desired_time).getTime();
+            const lockedTime = new Date(ride.departure_time).getTime();
+
+            if (requestedTime !== lockedTime) {
+                throw new Error(
+                    "This ride's departure time is already fixed by an approved passenger; the requested desired_time no longer matches and cannot be approved"
+                );
+            }
+        }
+
+        // ----------------------------------------------------
         // Check driver's minimum balance
         // ----------------------------------------------------
 
@@ -1527,7 +1577,7 @@ const approveRideRequest = async ({
             `);
 
         // ----------------------------------------------------
-        // Decrease available seats
+        // Decrease available seats + apply departure_time
         // ----------------------------------------------------
 
         const newEmptySeats =
@@ -1536,10 +1586,12 @@ const approveRideRequest = async ({
         await new sql.Request(transaction)
             .input("id_ride", sql.Int, request.id_ride)
             .input("empty_seats", sql.Int, newEmptySeats)
+            .input("departure_time", sql.DateTime2, newDepartureTime)
             .query(`
                 UPDATE RIDE
                 SET
                     empty_seats = @empty_seats,
+                    departure_time = @departure_time,
                     is_available =
                         CASE
                             WHEN @empty_seats <= 0 THEN 0
@@ -1555,6 +1607,7 @@ const approveRideRequest = async ({
             ride: {
                 ...ride,
                 empty_seats: newEmptySeats,
+                departure_time: newDepartureTime,
                 is_available: newEmptySeats > 0 ? 1 : 0
             }
         };

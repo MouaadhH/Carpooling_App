@@ -141,7 +141,7 @@ const getAvailableRides = async () => {
             WHERE r.status_ride = 'active'
               AND r.is_available = 1
               AND r.empty_seats > 0
-              AND r.departure_time >= SYSDATETIME()
+              AND r.departure_time <= SYSDATETIME()
 
             ORDER BY r.departure_time ASC
         `);
