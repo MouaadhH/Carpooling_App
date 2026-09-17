@@ -674,13 +674,15 @@ const startRide = async ({ id_ride, id_driver }) => {
                   AND status_ride = 'active'
                   AND is_available = 0
             `);
-
-        if (updateResult.rowsAffected[0] !== 1) {
-            throw new Error(
-                "Ride could not be started"
+            const rowsUpdated = Number(
+                updateResult.recordset[0].rows_updated
             );
-        }
-
+            
+            if (rowsUpdated !== 1) {
+                throw new Error(
+                    "Ride could not be started"
+                );
+            }
         // --------------------------------------------------
         // Get final ride state
         // --------------------------------------------------
