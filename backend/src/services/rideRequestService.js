@@ -1533,10 +1533,13 @@ const approveRideRequest = async ({
         // ----------------------------------------------------
         // Approve request
         // ----------------------------------------------------
+        
+        const passengerTotal =
+          lockedPrice * Number(request.seats_needed);
 
         const updateRequestResult = await new sql.Request(transaction)
             .input("id_ride_request", sql.Int, id_ride_request)
-            .input("locked_price", sql.Decimal(10, 2), lockedPrice)
+            .input("locked_price", sql.Decimal(10, 2), passengerTotal)
             .query(`
                 DECLARE @UpdatedRequest TABLE (
                     id_ride_request INT,
@@ -1575,7 +1578,10 @@ const approveRideRequest = async ({
 
                 SELECT * FROM @UpdatedRequest;
             `);
-
+        
+        if (updateRequestResult.recordset.length !== 1) {
+            throw new Error("Ride request could not be approved");
+        }
         // ----------------------------------------------------
         // Decrease available seats + apply departure_time
         // ----------------------------------------------------
@@ -1969,28 +1975,34 @@ const getActiveRides = async (id_user) => {
 };
 
 const payRideRequest = async ({ id_ride_request, id_user }) => {
+
     const pool = getPool();
     const transaction = new sql.Transaction(pool);
 
     try {
+
         await transaction.begin();
 
+        // --------------------------------------------------
         // Lock the ride request
-        const requestResult = await transaction.request()
+        // --------------------------------------------------
+
+        const requestResult = await new sql.Request(transaction)
             .input("id_ride_request", sql.Int, id_ride_request)
             .query(`
                 SELECT
                     rr.id_ride_request,
                     rr.id_user,
                     rr.id_ride,
+                    rr.desired_price,
+                    rr.payment_method,
                     rr.status_request,
                     rr.payment_status,
                     r.status_ride
                 FROM RIDE_REQUEST rr WITH (UPDLOCK, HOLDLOCK)
                 INNER JOIN RIDE r
-                    ON rr.id_ride = r.id_ride 
+                    ON rr.id_ride = r.id_ride
                 WHERE rr.id_ride_request = @id_ride_request
-                
             `);
 
         if (requestResult.recordset.length === 0) {
@@ -1999,22 +2011,40 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
 
         const request = requestResult.recordset[0];
 
-        // Make sure this request belongs to the passenger
+        // --------------------------------------------------
+        // Authorization
+        // --------------------------------------------------
+
         if (Number(request.id_user) !== Number(id_user)) {
-          throw new Error("You are not authorized to pay this ride request");
-       }
+            throw new Error(
+                "You are not authorized to pay this ride request"
+            );
+        }
 
-        // Only approved requests can be paid
+        // --------------------------------------------------
+        // Request must be approved
+        // --------------------------------------------------
+
         if (request.status_request !== "approved") {
-            throw new Error("Only an approved ride request can be paid");
+            throw new Error(
+                "Only an approved ride request can be paid"
+            );
         }
 
-        // Payment cannot be made twice
+        // --------------------------------------------------
+        // Prevent double payment
+        // --------------------------------------------------
+
         if (request.payment_status === "paid") {
-            throw new Error("Ride request has already been paid");
+            throw new Error(
+                "Ride request has already been paid"
+            );
         }
 
-        // Payment is allowed while the ride is in progress or completed
+        // --------------------------------------------------
+        // Payment state
+        // --------------------------------------------------
+
         if (
             request.status_ride !== "in_progress" &&
             request.status_ride !== "completed"
@@ -2024,19 +2054,156 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
             );
         }
 
-        // Mark payment as completed
-        const updateResult = await transaction.request()
+        // --------------------------------------------------
+        // Validate payment method
+        // --------------------------------------------------
+
+        const paymentMethod = request.payment_method;
+
+        if (
+            paymentMethod !== "cash" &&
+            paymentMethod !== "wallet" &&
+            paymentMethod !== "baridimob"
+        ) {
+            throw new Error(
+                "Invalid payment method"
+            );
+        }
+
+        if (paymentMethod === "wallet") {
+
+            // --------------------------------------------------
+            // Wallet payment
+            // --------------------------------------------------
+    
+            if (paymentMethod === "wallet") {
+    
+                const amount = Number(request.desired_price);
+    
+                if (!Number.isFinite(amount) || amount <= 0) {
+                    throw new Error(
+                        "Invalid ride payment amount"
+                    );
+                }
+    
+                // ----------------------------------------------
+                // Lock passenger wallet
+                // ----------------------------------------------
+    
+                const walletResult = await new sql.Request(transaction)
+                    .input("id_user", sql.Int, id_user)
+                    .query(`
+                        SELECT
+                            id_wallet,
+                            balance
+                        FROM WALLET WITH (UPDLOCK, HOLDLOCK)
+                        WHERE id_user = @id_user
+                    `);
+    
+                if (walletResult.recordset.length === 0) {
+                    throw new Error(
+                        "Passenger wallet not found"
+                    );
+                }
+    
+                const wallet = walletResult.recordset[0];
+                const currentBalance = Number(wallet.balance);
+    
+                if (
+                    !Number.isFinite(currentBalance) ||
+                    currentBalance < amount
+                ) {
+                    throw new Error(
+                        `Insufficient wallet balance. Required: ${amount.toFixed(2)} DA, available: ${currentBalance.toFixed(2)} DA`
+                    );
+                }
+    
+                const newBalance = currentBalance - amount;
+    
+                // ----------------------------------------------
+                // Debit wallet
+                // ----------------------------------------------
+    
+                const walletUpdateResult = await new sql.Request(transaction)
+                    .input("id_wallet", sql.Int, wallet.id_wallet)
+                    .input("new_balance", sql.Decimal(10, 2), newBalance)
+                    .query(`
+                        UPDATE WALLET
+                        SET balance = @new_balance
+                        WHERE id_wallet = @id_wallet
+                    `);
+    
+                if (walletUpdateResult.rowsAffected[0] !== 1) {
+                    throw new Error(
+                        "Wallet debit could not be completed"
+                    );
+                }
+    
+                // ----------------------------------------------
+                // Record wallet transaction
+                // ----------------------------------------------
+    
+                await new sql.Request(transaction)
+                    .input("type", sql.NVarChar, "debit")
+                    .input("amount", sql.Decimal(10, 2), amount)
+                    .input("balance_after", sql.Decimal(10, 2), newBalance)
+                    .input(
+                        "transaction_reason",
+                        sql.NVarChar,
+                        "ride_payment"
+                    )
+                    .input("id_wallet", sql.Int, wallet.id_wallet)
+                    .input("id_ride", sql.Int, request.id_ride)
+                    .query(`
+                        INSERT INTO WALLET_TRANSACTION
+                        (
+                            type,
+                            amount,
+                            balance_after,
+                            transaction_reason,
+                            id_wallet,
+                            id_ride
+                        )
+                        VALUES
+                        (
+                            @type,
+                            @amount,
+                            @balance_after,
+                            @transaction_reason,
+                            @id_wallet,
+                            @id_ride
+                        )
+                    `);
+            }
+        }
+        // --------------------------------------------------
+        // Mark ride request as paid
+        // --------------------------------------------------
+
+        const updateResult = await new sql.Request(transaction)
             .input("id_ride_request", sql.Int, id_ride_request)
             .query(`
                 UPDATE RIDE_REQUEST
                 SET payment_status = 'paid'
                 WHERE id_ride_request = @id_ride_request
-                  AND payment_status = 'pending'
+                  AND payment_status = 'pending';
+
+                SELECT @@ROWCOUNT AS rows_updated;
             `);
 
-        if (updateResult.rowsAffected[0] !== 1) {
-            throw new Error("Payment could not be completed");
+        const rowsUpdated = Number(
+            updateResult.recordset[0].rows_updated
+        );
+
+        if (rowsUpdated !== 1) {
+            throw new Error(
+                "Payment could not be completed"
+            );
         }
+
+        // --------------------------------------------------
+        // Commit everything atomically
+        // --------------------------------------------------
 
         await transaction.commit();
 
@@ -2047,6 +2214,7 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
         };
 
     } catch (error) {
+
         try {
             await transaction.rollback();
         } catch (_) {}

@@ -542,6 +542,8 @@ const startRide = async ({ id_ride, id_driver }) => {
                 "Ride must be unavailable before it can be started"
             );
         }
+        
+        
 
         if (new Date(ride.departure_time) > new Date()) {
             throw new Error(
@@ -673,6 +675,7 @@ const startRide = async ({ id_ride, id_driver }) => {
                 WHERE id_ride = @id_ride
                   AND status_ride = 'active'
                   AND is_available = 0
+                  SELECT @@ROWCOUNT AS rows_updated;
             `);
             const rowsUpdated = Number(
                 updateResult.recordset[0].rows_updated

@@ -1,5 +1,3 @@
-
-
 const { sql, getPool } = require("../config/db");
 
 const checkDriverRideEligibility = async ({
@@ -8,11 +6,16 @@ const checkDriverRideEligibility = async ({
 }) => {
     const pool = getPool();
 
-    const result = await pool
+    const request = pool
         .request()
-        .input("id_driver", sql.Int, id_driver)
-        .input("id_vehicile", sql.Int, id_vehicile)
-        .query(`
+        .input("id_driver", sql.Int, id_driver);
+
+    let query;
+
+    if (id_vehicile !== undefined && id_vehicile !== null) {
+        request.input("id_vehicile", sql.Int, id_vehicile);
+
+        query = `
             SELECT
                 dp.is_verified AS driver_verified,
                 v.id_vehicile,
@@ -23,7 +26,24 @@ const checkDriverRideEligibility = async ({
                 ON v.id_profile = dp.id_profile
             WHERE dp.id_driver = @id_driver
               AND v.id_vehicile = @id_vehicile;
-        `);
+        `;
+    } else {
+        query = `
+            SELECT TOP 1
+                dp.is_verified AS driver_verified,
+                v.id_vehicile,
+                v.number_of_seats,
+                v.verification_status AS vehicle_status
+            FROM DRIVER_PROFILE dp
+            INNER JOIN VEHICLE v
+                ON v.id_profile = dp.id_profile
+            WHERE dp.id_driver = @id_driver
+              AND v.verification_status = 'approved'
+            ORDER BY v.id_vehicile;
+        `;
+    }
+
+    const result = await request.query(query);
 
     if (result.recordset.length === 0) {
         throw new Error(
