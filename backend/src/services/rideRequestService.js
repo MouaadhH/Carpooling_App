@@ -1,7 +1,7 @@
 const { getPool, sql } = require("../config/db");
 const { checkMinimumBalance } = require("./walletService");
 const { validateRidePrice } = require("./pricingService");
-
+const { checkDriverRideEligibility } = require("./driverRideEligibilityService");
 
 // ============================================================
 // GET DISTANCE BETWEEN TWO ADDRESSES
@@ -153,6 +153,37 @@ const createRideRequest = async ({
         if (ride.status_ride !== "active") {
             throw new Error("Ride is not active");
         }
+        
+        //----------------------------------------------------
+        // Ride must not have already departed
+        //----------------------------------------------------
+
+        if (ride.status_ride !== "active") {
+          throw new Error("Ride is not active");
+        }
+
+        if (new Date(ride.departure_time) <= new Date()) {
+         throw new Error("Ride has already departed");
+        }
+        
+        // ----------------------------------------------------
+        // Check for duplicate requests
+        // ----------------------------------------------------
+
+        const duplicateCheck = await new sql.Request(transaction)
+           .input("id_user", sql.Int, id_user)
+           .input("id_ride", sql.Int, id_ride)
+           .query(`
+               SELECT id_ride_request
+               FROM RIDE_REQUEST
+               WHERE id_user = @id_user
+                 AND id_ride = @id_ride
+                 AND status_request IN ('pending', 'approved')
+           `);
+       
+                if (duplicateCheck.recordset.length > 0) {
+                    throw new Error("You already have an active request for this ride");
+        }    
 
         // ----------------------------------------------------
         // Ride must have enough seats
@@ -187,36 +218,66 @@ const createRideRequest = async ({
         // ----------------------------------------------------
 
         const insertResult = await new sql.Request(transaction)
-            .input("id_user", sql.Int, id_user)
-            .input("id_ride", sql.Int, id_ride)
-            .input("seats_needed", sql.Int, Number(seats_needed))
-            .input("desired_time", sql.DateTime2, finalDesiredTime)
-            .input("desired_price", sql.Decimal(10, 2), lockedPrice)
-            .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
-            .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
-            .query(`
-                INSERT INTO RIDE_REQUEST (
-                    id_user,
-                    id_ride,
-                    seats_needed,
-                    desired_time,
-                    desired_price,
-                    id_adresse_pickup,
-                    id_adresse_dropoff,
-                    status_request
-                )
-                OUTPUT INSERTED.*
-                VALUES (
-                    @id_user,
-                    @id_ride,
-                    @seats_needed,
-                    @desired_time,
-                    @desired_price,
-                    @id_adresse_pickup,
-                    @id_adresse_dropoff,
-                    'pending'
-                )
-            `);
+    .input("id_user", sql.Int, id_user)
+    .input("id_ride", sql.Int, id_ride)
+    .input("seats_needed", sql.Int, Number(seats_needed))
+    .input("desired_time", sql.DateTime2, finalDesiredTime)
+    .input("desired_price", sql.Decimal(10, 2), lockedPrice)
+    .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
+    .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
+    .query(`
+        DECLARE @InsertedRequest TABLE (
+            id_ride_request INT,
+            id_user INT,
+            id_ride INT,
+            seats_needed INT,
+            creation_date_req DATETIME2,
+            desired_time DATETIME2,
+            desired_price DECIMAL(10,2),
+            id_adresse_pickup INT,
+            id_adresse_dropoff INT,
+            status_request NVARCHAR(20),
+            payment_method NVARCHAR(20),
+            payment_status NVARCHAR(20)
+        );
+
+        INSERT INTO RIDE_REQUEST (
+            id_user,
+            id_ride,
+            seats_needed,
+            desired_time,
+            desired_price,
+            id_adresse_pickup,
+            id_adresse_dropoff,
+            status_request
+        )
+        OUTPUT
+            INSERTED.id_ride_request,
+            INSERTED.id_user,
+            INSERTED.id_ride,
+            INSERTED.seats_needed,
+            INSERTED.creation_date_req,
+            INSERTED.desired_time,
+            INSERTED.desired_price,
+            INSERTED.id_adresse_pickup,
+            INSERTED.id_adresse_dropoff,
+            INSERTED.status_request,
+            INSERTED.payment_method,
+            INSERTED.payment_status
+        INTO @InsertedRequest
+        VALUES (
+            @id_user,
+            @id_ride,
+            @seats_needed,
+            @desired_time,
+            @desired_price,
+            @id_adresse_pickup,
+            @id_adresse_dropoff,
+            'pending'
+        );
+
+        SELECT * FROM @InsertedRequest;
+    `);
 
         await transaction.commit();
 
@@ -294,6 +355,10 @@ const createOpenRideRequest = async ({
         distance,
         price: desired_price
     });
+    
+
+    const pricePerSeat = priceValidation.price;
+    const passengerTotal = pricePerSeat * Number(seats_needed);
 
     const pool = getPool();
 
@@ -302,36 +367,66 @@ const createOpenRideRequest = async ({
     // --------------------------------------------------------
 
     const result = await pool
-        .request()
-        .input("id_user", sql.Int, id_user)
-        .input("seats_needed", sql.Int, Number(seats_needed))
-        .input("desired_time", sql.DateTime2, desired_time || null)
-        .input("desired_price", sql.Decimal(10, 2), priceValidation.price)
-        .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
-        .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
-        .query(`
-            INSERT INTO RIDE_REQUEST (
-                id_user,
-                id_ride,
-                seats_needed,
-                desired_time,
-                desired_price,
-                id_adresse_pickup,
-                id_adresse_dropoff,
-                status_request
-            )
-            OUTPUT INSERTED.*
-            VALUES (
-                @id_user,
-                NULL,
-                @seats_needed,
-                @desired_time,
-                @desired_price,
-                @id_adresse_pickup,
-                @id_adresse_dropoff,
-                'pending'
-            )
-        `);
+    .request()
+    .input("id_user", sql.Int, id_user)
+    .input("seats_needed", sql.Int, Number(seats_needed))
+    .input("desired_time", sql.DateTime2, desired_time || null)
+    .input("desired_price", sql.Decimal(10, 2), passengerTotal)
+    .input("id_adresse_pickup", sql.Int, id_adresse_pickup)
+    .input("id_adresse_dropoff", sql.Int, id_adresse_dropoff)
+    .query(`
+        DECLARE @InsertedRequest TABLE (
+            id_ride_request INT,
+            id_user INT,
+            id_ride INT,
+            seats_needed INT,
+            creation_date_req DATETIME2,
+            desired_time DATETIME2,
+            desired_price DECIMAL(10,2),
+            id_adresse_pickup INT,
+            id_adresse_dropoff INT,
+            status_request NVARCHAR(20),
+            payment_method NVARCHAR(20),
+            payment_status NVARCHAR(20)
+        );
+
+        INSERT INTO RIDE_REQUEST (
+            id_user,
+            id_ride,
+            seats_needed,
+            desired_time,
+            desired_price,
+            id_adresse_pickup,
+            id_adresse_dropoff,
+            status_request
+        )
+        OUTPUT
+            INSERTED.id_ride_request,
+            INSERTED.id_user,
+            INSERTED.id_ride,
+            INSERTED.seats_needed,
+            INSERTED.creation_date_req,
+            INSERTED.desired_time,
+            INSERTED.desired_price,
+            INSERTED.id_adresse_pickup,
+            INSERTED.id_adresse_dropoff,
+            INSERTED.status_request,
+            INSERTED.payment_method,
+            INSERTED.payment_status
+        INTO @InsertedRequest
+        VALUES (
+            @id_user,
+            NULL,
+            @seats_needed,
+            @desired_time,
+            @desired_price,
+            @id_adresse_pickup,
+            @id_adresse_dropoff,
+            'pending'
+        );
+
+        SELECT * FROM @InsertedRequest;
+    `);
 
     return {
         ...result.recordset[0],
@@ -362,8 +457,8 @@ const getRideRequests = async ({
                 rr.*,
                 u.name_u AS passenger_name,
                 u.phone_u AS passenger_phone,
-                a1.address_line AS pickup_address,
-                a2.address_line AS dropoff_address
+                a1.libelle AS pickup_address,
+                a2.libelle AS dropoff_address
             FROM RIDE_REQUEST rr
             INNER JOIN RIDE r
                 ON r.id_ride = rr.id_ride
@@ -375,7 +470,7 @@ const getRideRequests = async ({
                 ON a2.id_adresse = rr.id_adresse_dropoff
             WHERE rr.id_ride = @id_ride
               AND r.id_driver_posted = @id_driver_posted
-            ORDER BY rr.creation_date_request DESC
+            ORDER BY rr.creation_date_req DESC
         `);
 
     return result.recordset;
@@ -397,8 +492,8 @@ const getOpenRideRequests = async () => {
                 rr.*,
                 u.name_u AS passenger_name,
                 u.phone_u AS passenger_phone,
-                a1.address_line AS pickup_address,
-                a2.address_line AS dropoff_address
+                a1.libelle AS pickup_address,
+                a2.libelle AS dropoff_address
             FROM RIDE_REQUEST rr
             INNER JOIN [USER] u
                 ON u.id_user = rr.id_user
@@ -408,7 +503,7 @@ const getOpenRideRequests = async () => {
                 ON a2.id_adresse = rr.id_adresse_dropoff
             WHERE rr.id_ride IS NULL
               AND rr.status_request = 'pending'
-            ORDER BY rr.creation_date_request DESC
+            ORDER BY rr.creation_date_req DESC
         `);
 
     return result.recordset;
@@ -425,6 +520,230 @@ const acceptOpenRideRequest = async ({
 }) => {
 
     const pool = getPool();
+    const transaction = new sql.Transaction(pool);
+
+    try {
+        await transaction.begin();
+
+        // Lock the open request
+        const requestResult = await new sql.Request(transaction)
+            .input("id_ride_request", sql.Int, id_ride_request)
+            .query(`
+                SELECT *
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride_request = @id_ride_request;
+            `);
+
+        if (requestResult.recordset.length === 0) {
+            throw new Error("Ride request not found");
+        }
+
+        const request = requestResult.recordset[0];
+
+        // Request must still be pending
+        if (request.status_request !== "pending") {
+            throw new Error("Ride request is no longer pending");
+        }
+
+        // It must still be an open request
+        if (request.id_ride !== null) {
+            throw new Error("Ride request is already linked to a ride");
+        }
+
+        // Passenger cannot become their own driver
+        if (Number(request.id_user) === Number(id_driver)) {
+            throw new Error("Passenger cannot accept their own request");
+        }
+
+        // Validate addresses
+        if (!request.id_adresse_pickup || !request.id_adresse_dropoff) {
+            throw new Error("Ride request addresses are required");
+        }
+
+        // Check driver eligibility and get an approved vehicle
+        const { id_vehicile } = await checkDriverRideEligibility({
+            id_driver,
+            transaction
+        });
+
+        // Check driver's minimum balance
+        await checkMinimumBalance(id_driver, transaction);
+
+        // Calculate actual distance
+        const distance = await getDistanceBetweenAddresses({
+            id_adresse_start: request.id_adresse_pickup,
+            id_adresse_arrive: request.id_adresse_dropoff,
+            transaction
+        });
+
+       const lockedPrice = Number(request.desired_price);
+
+        if (
+            !Number.isFinite(lockedPrice) ||
+            lockedPrice <= 0
+        ) {
+            throw new Error("Ride request has an invalid desired price");
+        }
+
+        // Create the ride
+        const rideResult = await new sql.Request(transaction)
+            .input("id_driver_posted", sql.Int, id_driver)
+            .input("id_vehicile", sql.Int, id_vehicile)
+            .input("id_adresse_start", sql.Int, request.id_adresse_pickup)
+            .input("id_adresse_arrive", sql.Int, request.id_adresse_dropoff)
+            .input("departure_time", sql.DateTime2, request.desired_time)
+            .input("distance", sql.Decimal(10, 2), distance)
+            .input("prix_total", sql.Decimal(10, 2), lockedPrice)
+            .input("empty_seats", sql.Int, Number(request.seats_needed))
+            .query(`
+                DECLARE @InsertedRide TABLE (
+                    id_ride INT,
+                    prix_total DECIMAL(10,2),
+                    distance DECIMAL(10,2),
+                    empty_seats INT,
+                    departure_time DATETIME2,
+                    status_ride NVARCHAR(20),
+                    commission DECIMAL(10,2),
+                    creation_date_ride DATETIME2,
+                    id_driver_posted INT,
+                    id_vehicile INT,
+                    id_adresse_start INT,
+                    id_adresse_arrive INT,
+                    is_available BIT
+                );
+
+                INSERT INTO RIDE (
+                    id_driver_posted,
+                    id_vehicile,
+                    id_adresse_start,
+                    id_adresse_arrive,
+                    departure_time,
+                    distance,
+                    prix_total,
+                    empty_seats,
+                    status_ride,
+                    is_available
+                )
+                OUTPUT
+                    INSERTED.id_ride,
+                    INSERTED.prix_total,
+                    INSERTED.distance,
+                    INSERTED.empty_seats,
+                    INSERTED.departure_time,
+                    INSERTED.status_ride,
+                    INSERTED.commission,
+                    INSERTED.creation_date_ride,
+                    INSERTED.id_driver_posted,
+                    INSERTED.id_vehicile,
+                    INSERTED.id_adresse_start,
+                    INSERTED.id_adresse_arrive,
+                    INSERTED.is_available
+                INTO @InsertedRide
+                VALUES (
+                    @id_driver_posted,
+                    @id_vehicile,
+                    @id_adresse_start,
+                    @id_adresse_arrive,
+                    @departure_time,
+                    @distance,
+                    @prix_total,
+                    @empty_seats,
+                    'active',
+                    1
+                );
+
+                SELECT *
+                FROM @InsertedRide;
+            `);
+
+        if (rideResult.recordset.length === 0) {
+            throw new Error("Failed to create ride");
+        }
+
+        const newRide = rideResult.recordset[0];
+
+        // Link the request to the newly created ride
+        const updateRequestResult = await new sql.Request(transaction)
+            .input("id_ride_request", sql.Int, id_ride_request)
+            .input("id_ride", sql.Int, newRide.id_ride)
+            .input("locked_price", sql.Decimal(10, 2), lockedPrice)
+            .query(`
+                DECLARE @UpdatedRequest TABLE (
+                    id_ride_request INT,
+                    id_user INT,
+                    id_ride INT,
+                    seats_needed INT,
+                    creation_date_req DATETIME2,
+                    desired_time DATETIME2,
+                    desired_price DECIMAL(10,2),
+                    id_adresse_pickup INT,
+                    id_adresse_dropoff INT,
+                    status_request NVARCHAR(20),
+                    payment_method NVARCHAR(20),
+                    payment_status NVARCHAR(20)
+                );
+
+                UPDATE RIDE_REQUEST
+                SET
+                    id_ride = @id_ride,
+                    desired_price = @locked_price,
+                    status_request = 'approved'
+                OUTPUT
+                    INSERTED.id_ride_request,
+                    INSERTED.id_user,
+                    INSERTED.id_ride,
+                    INSERTED.seats_needed,
+                    INSERTED.creation_date_req,
+                    INSERTED.desired_time,
+                    INSERTED.desired_price,
+                    INSERTED.id_adresse_pickup,
+                    INSERTED.id_adresse_dropoff,
+                    INSERTED.status_request,
+                    INSERTED.payment_method,
+                    INSERTED.payment_status
+                INTO @UpdatedRequest
+                WHERE id_ride_request = @id_ride_request
+                  AND status_request = 'pending'
+                  AND id_ride IS NULL;
+
+                SELECT *
+                FROM @UpdatedRequest;
+            `);
+
+        if (updateRequestResult.recordset.length === 0) {
+            throw new Error("Failed to link ride request to ride");
+        }
+
+        await transaction.commit();
+
+        return {
+            ride: newRide,
+            rideRequest: updateRequestResult.recordset[0]
+        };
+
+    } catch (error) {
+
+        if (transaction._aborted !== true) {
+            try {
+                await transaction.rollback();
+            } catch (_) {}
+        }
+
+        throw error;
+    }
+};
+
+// ============================================================
+// DRIVER NEGOTIATES OPEN RIDE REQUEST
+// ============================================================
+
+const negotiateRideRequest = async ({
+    id_ride_request,
+    id_driver,
+    negotiated_price
+}) => {
+
+    const pool = getPool();
 
     const transaction = new sql.Transaction(pool);
 
@@ -433,7 +752,7 @@ const acceptOpenRideRequest = async ({
         await transaction.begin();
 
         // ----------------------------------------------------
-        // Lock the open request
+        // Lock the request
         // ----------------------------------------------------
 
         const requestResult = await new sql.Request(transaction)
@@ -460,7 +779,7 @@ const acceptOpenRideRequest = async ({
         }
 
         // ----------------------------------------------------
-        // It must still be an open request
+        // Must be an open request
         // ----------------------------------------------------
 
         if (request.id_ride !== null) {
@@ -468,47 +787,37 @@ const acceptOpenRideRequest = async ({
         }
 
         // ----------------------------------------------------
-        // Passenger cannot become their own driver
+        // Passenger cannot negotiate their own request
         // ----------------------------------------------------
 
         if (Number(request.id_user) === Number(id_driver)) {
-            throw new Error("Passenger cannot accept their own request");
+            throw new Error(
+                "Passenger cannot negotiate their own ride request"
+            );
         }
 
         // ----------------------------------------------------
         // Validate addresses
         // ----------------------------------------------------
 
-        if (!request.id_adresse_pickup || !request.id_adresse_dropoff) {
+        if (
+            !request.id_adresse_pickup ||
+            !request.id_adresse_dropoff
+        ) {
             throw new Error("Ride request addresses are required");
         }
 
         // ----------------------------------------------------
-        // Find driver's vehicle
+        // Validate negotiated price
         // ----------------------------------------------------
 
-        const vehicleResult = await new sql.Request(transaction)
-            .input("id_driver", sql.Int, id_driver)
-            .query(`
-                SELECT TOP 1
-                    id_vehicile
-                FROM VEHICILE
-                WHERE id_user = @id_driver
-                  AND is_approved = 1
-                ORDER BY id_vehicile
-            `);
+        const price = Number(negotiated_price);
 
-        if (vehicleResult.recordset.length === 0) {
-            throw new Error("Driver does not have an approved vehicle");
+        if (!Number.isFinite(price) || price <= 0) {
+            throw new Error(
+                "Negotiated price must be a valid positive number"
+            );
         }
-
-        const id_vehicile = vehicleResult.recordset[0].id_vehicile;
-
-        // ----------------------------------------------------
-        // Check driver's minimum balance
-        // ----------------------------------------------------
-
-        await checkMinimumBalance(id_driver, transaction);
 
         // ----------------------------------------------------
         // Calculate actual distance
@@ -521,82 +830,514 @@ const acceptOpenRideRequest = async ({
         });
 
         // ----------------------------------------------------
-        // Revalidate requested price against current tariff
+        // Validate negotiated price against current tariff
         // ----------------------------------------------------
 
         const priceValidation = await validateRidePrice({
             distance,
-            price: request.desired_price
+            price
         });
 
-        const lockedPrice = priceValidation.price;
+        const validatedPrice = priceValidation.price;
+
+        // ----------------------------------------------------
+        // Prevent another negotiation while one is pending
+        // ----------------------------------------------------
+
+        if (
+            request.negotiated_price !== null &&
+            request.negotiation_status === "pending"
+        ) {
+            throw new Error(
+                "A negotiation is already pending for this request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Store driver's offer
+        // ----------------------------------------------------
+
+        const updateResult = await new sql.Request(transaction)
+            .input(
+                "id_ride_request",
+                sql.Int,
+                id_ride_request
+            )
+            .input(
+                "negotiated_price",
+                sql.Decimal(10, 2),
+                validatedPrice
+            )
+            .input(
+                "id_driver_negotiated",
+                sql.Int,
+                id_driver
+            )
+            .query(`
+                UPDATE RIDE_REQUEST
+                SET
+                    negotiated_price = @negotiated_price,
+                    negotiation_status = 'pending',
+                    id_driver_negotiated = @id_driver_negotiated
+                WHERE id_ride_request = @id_ride_request;
+
+                SELECT
+                    *
+                FROM RIDE_REQUEST
+                WHERE id_ride_request = @id_ride_request;
+            `);
+
+        await transaction.commit();
+
+        return updateResult.recordset[0];
+
+    } catch (error) {
+
+        if (transaction._aborted !== true) {
+            try {
+                await transaction.rollback();
+            } catch (_) {}
+        }
+
+        throw error;
+    }
+};
+
+
+// ============================================================
+// PASSENGER ACCEPTS NEGOTIATION
+// ============================================================
+
+const acceptRideNegotiation = async ({
+    id_ride_request,
+    id_user
+}) => {
+
+    const pool = getPool();
+
+    const transaction = new sql.Transaction(pool);
+
+    try {
+
+        await transaction.begin();
+
+        // ----------------------------------------------------
+        // Lock the request
+        // ----------------------------------------------------
+
+        const requestResult = await new sql.Request(transaction)
+            .input(
+                "id_ride_request",
+                sql.Int,
+                id_ride_request
+            )
+            .query(`
+                SELECT
+                    *
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride_request = @id_ride_request
+            `);
+
+        if (requestResult.recordset.length === 0) {
+            throw new Error("Ride request not found");
+        }
+
+        const request = requestResult.recordset[0];
+
+        // ----------------------------------------------------
+        // Verify passenger ownership
+        // ----------------------------------------------------
+
+        if (Number(request.id_user) !== Number(id_user)) {
+            throw new Error(
+                "You are not allowed to accept this negotiation"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Request must still be pending
+        // ----------------------------------------------------
+
+        if (request.status_request !== "pending") {
+            throw new Error("Ride request is no longer pending");
+        }
+
+        // ----------------------------------------------------
+        // Must still be an open request
+        // ----------------------------------------------------
+
+        if (request.id_ride !== null) {
+            throw new Error(
+                "Ride request is already linked to a ride"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Must have a pending negotiation
+        // ----------------------------------------------------
+
+        if (
+            request.negotiation_status !== "pending" ||
+            request.negotiated_price === null
+        ) {
+            throw new Error(
+                "There is no pending negotiation for this request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Driver must exist
+        // ----------------------------------------------------
+
+        if (request.id_driver_negotiated === null) {
+            throw new Error(
+                "Negotiating driver is missing"
+            );
+        }
+
+        const id_driver = request.id_driver_negotiated;
+
+        // ----------------------------------------------------
+        // Passenger cannot be the negotiating driver
+        // ----------------------------------------------------
+
+        if (Number(request.id_user) === Number(id_driver)) {
+            throw new Error(
+                "Passenger cannot accept their own request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Find driver's approved vehicle
+        // ----------------------------------------------------
+
+        const vehicleResult = await new sql.Request(transaction)
+            .input("id_driver", sql.Int, id_driver)
+            .query(`
+                SELECT TOP 1
+                    v.id_vehicile
+                FROM VEHICLE v
+                INNER JOIN DRIVER_PROFILE dp
+                    ON v.id_profile = dp.id_profile
+                WHERE dp.id_driver = @id_driver
+                  AND v.verification_status = 'approved'
+                ORDER BY v.id_vehicile;
+            `);
+
+        if (vehicleResult.recordset.length === 0) {
+            throw new Error(
+                "Driver does not have an approved vehicle"
+            );
+        }
+
+        const id_vehicile =
+            vehicleResult.recordset[0].id_vehicile;
+
+        // ----------------------------------------------------
+        // Check driver's minimum balance
+        // ----------------------------------------------------
+
+        await checkMinimumBalance(
+            id_driver,
+            transaction
+        );
+
+        // ----------------------------------------------------
+        // Validate addresses
+        // ----------------------------------------------------
+
+        if (
+            !request.id_adresse_pickup ||
+            !request.id_adresse_dropoff
+        ) {
+            throw new Error(
+                "Ride request addresses are required"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Calculate actual distance again
+        // ----------------------------------------------------
+
+        const distance =
+            await getDistanceBetweenAddresses({
+                id_adresse_start:
+                    request.id_adresse_pickup,
+                id_adresse_arrive:
+                    request.id_adresse_dropoff,
+                transaction
+            });
+
+        // ----------------------------------------------------
+        // Revalidate negotiated price
+        // ----------------------------------------------------
+
+        const priceValidation =
+            await validateRidePrice({
+                distance,
+                price: request.negotiated_price
+            });
+
+        const lockedPrice =
+            priceValidation.price;
 
         // ----------------------------------------------------
         // Create the ride
+        // NO OUTPUT INSERTED
         // ----------------------------------------------------
 
-        const rideResult = await new sql.Request(transaction)
-            .input("id_driver_posted", sql.Int, id_driver)
-            .input("id_vehicile", sql.Int, id_vehicile)
-            .input("id_adresse_start", sql.Int, request.id_adresse_pickup)
-            .input("id_adresse_arrive", sql.Int, request.id_adresse_dropoff)
-            .input("departure_time", sql.DateTime2, request.desired_time)
-            .input("distance", sql.Decimal(10, 2), distance)
-            .input("prix_total", sql.Decimal(10, 2), lockedPrice)
-            .input("empty_seats", sql.Int, Number(request.seats_needed))
-            .query(`
-                INSERT INTO RIDE (
-                    id_driver_posted,
-                    id_vehicile,
-                    id_adresse_start,
-                    id_adresse_arrive,
-                    departure_time,
-                    distance,
-                    prix_total,
-                    empty_seats,
-                    status_ride,
-                    is_available
+        const rideResult =
+            await new sql.Request(transaction)
+                .input(
+                    "id_driver_posted",
+                    sql.Int,
+                    id_driver
                 )
-                OUTPUT INSERTED.*
-                VALUES (
-                    @id_driver_posted,
-                    @id_vehicile,
-                    @id_adresse_start,
-                    @id_adresse_arrive,
-                    @departure_time,
-                    @distance,
-                    @prix_total,
-                    @empty_seats,
-                    'active',
-                    1
+                .input(
+                    "id_vehicile",
+                    sql.Int,
+                    id_vehicile
                 )
-            `);
+                .input(
+                    "id_adresse_start",
+                    sql.Int,
+                    request.id_adresse_pickup
+                )
+                .input(
+                    "id_adresse_arrive",
+                    sql.Int,
+                    request.id_adresse_dropoff
+                )
+                .input(
+                    "departure_time",
+                    sql.DateTime2,
+                    request.desired_time
+                )
+                .input(
+                    "distance",
+                    sql.Decimal(10, 2),
+                    distance
+                )
+                .input(
+                    "prix_total",
+                    sql.Decimal(10, 2),
+                    lockedPrice
+                )
+                .input(
+                    "empty_seats",
+                    sql.Int,
+                    Number(request.seats_needed)
+                )
+                .query(`
+                    DECLARE @newRideId INT;
+
+                    INSERT INTO RIDE (
+                        id_driver_posted,
+                        id_vehicile,
+                        id_adresse_start,
+                        id_adresse_arrive,
+                        departure_time,
+                        distance,
+                        prix_total,
+                        empty_seats,
+                        status_ride,
+                        is_available
+                    )
+                    VALUES (
+                        @id_driver_posted,
+                        @id_vehicile,
+                        @id_adresse_start,
+                        @id_adresse_arrive,
+                        @departure_time,
+                        @distance,
+                        @prix_total,
+                        @empty_seats,
+                        'active',
+                        1
+                    );
+
+                    SET @newRideId = SCOPE_IDENTITY();
+
+                    SELECT
+                        id_ride,
+                        prix_total,
+                        distance,
+                        empty_seats,
+                        departure_time,
+                        status_ride,
+                        commission,
+                        creation_date_ride,
+                        id_driver_posted,
+                        id_vehicile,
+                        id_adresse_start,
+                        id_adresse_arrive,
+                        is_available
+                    FROM RIDE
+                    WHERE id_ride = @newRideId;
+                `);
+
+        if (rideResult.recordset.length === 0) {
+            throw new Error(
+                "Failed to create ride"
+            );
+        }
 
         const newRide = rideResult.recordset[0];
 
         // ----------------------------------------------------
-        // Link the request to the newly created ride
+        // Link request to ride
         // ----------------------------------------------------
 
-        const updateRequestResult = await new sql.Request(transaction)
-            .input("id_ride_request", sql.Int, id_ride_request)
-            .input("id_ride", sql.Int, newRide.id_ride)
-            .input("locked_price", sql.Decimal(10, 2), lockedPrice)
-            .query(`
-                UPDATE RIDE_REQUEST
-                SET
-                    id_ride = @id_ride,
-                    desired_price = @locked_price
-                OUTPUT INSERTED.*
-                WHERE id_ride_request = @id_ride_request
-            `);
+        const updateRequestResult =
+            await new sql.Request(transaction)
+                .input(
+                    "id_ride_request",
+                    sql.Int,
+                    id_ride_request
+                )
+                .input(
+                    "id_ride",
+                    sql.Int,
+                    newRide.id_ride
+                )
+                .input(
+                    "locked_price",
+                    sql.Decimal(10, 2),
+                    lockedPrice
+                )
+                .query(`
+                    UPDATE RIDE_REQUEST
+                    SET
+                        id_ride = @id_ride,
+                        desired_price = @locked_price,
+                        status_request = 'approved',
+                        negotiation_status = 'accepted'
+                    WHERE id_ride_request = @id_ride_request;
+
+                    SELECT
+                        *
+                    FROM RIDE_REQUEST
+                    WHERE id_ride_request = @id_ride_request;
+                `);
 
         await transaction.commit();
 
         return {
             ride: newRide,
-            rideRequest: updateRequestResult.recordset[0]
+            rideRequest:
+                updateRequestResult.recordset[0]
         };
+
+    } catch (error) {
+
+        if (transaction._aborted !== true) {
+            try {
+                await transaction.rollback();
+            } catch (_) {}
+        }
+
+        throw error;
+    }
+};
+
+
+// ============================================================
+// PASSENGER REJECTS NEGOTIATION
+// ============================================================
+
+const rejectRideNegotiation = async ({
+    id_ride_request,
+    id_user
+}) => {
+
+    const pool = getPool();
+
+    const transaction = new sql.Transaction(pool);
+
+    try {
+
+        await transaction.begin();
+
+        // ----------------------------------------------------
+        // Lock the request
+        // ----------------------------------------------------
+
+        const requestResult = await new sql.Request(transaction)
+            .input(
+                "id_ride_request",
+                sql.Int,
+                id_ride_request
+            )
+            .query(`
+                SELECT
+                    *
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride_request = @id_ride_request
+            `);
+
+        if (requestResult.recordset.length === 0) {
+            throw new Error("Ride request not found");
+        }
+
+        const request = requestResult.recordset[0];
+
+        // ----------------------------------------------------
+        // Verify passenger ownership
+        // ----------------------------------------------------
+
+        if (Number(request.id_user) !== Number(id_user)) {
+            throw new Error(
+                "You are not allowed to reject this negotiation"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Request must still be pending
+        // ----------------------------------------------------
+
+        if (request.status_request !== "pending") {
+            throw new Error("Ride request is no longer pending");
+        }
+
+        // ----------------------------------------------------
+        // Must have a pending negotiation
+        // ----------------------------------------------------
+
+        if (
+            request.negotiation_status !== "pending" ||
+            request.negotiated_price === null
+        ) {
+            throw new Error(
+                "There is no pending negotiation for this request"
+            );
+        }
+
+        // ----------------------------------------------------
+        // Reject negotiation
+        // ----------------------------------------------------
+
+        const updateResult =
+            await new sql.Request(transaction)
+                .input(
+                    "id_ride_request",
+                    sql.Int,
+                    id_ride_request
+                )
+                .query(`
+                    UPDATE RIDE_REQUEST
+                    SET
+                        negotiation_status = 'rejected'
+                    WHERE id_ride_request = @id_ride_request;
+
+                    SELECT
+                        *
+                    FROM RIDE_REQUEST
+                    WHERE id_ride_request = @id_ride_request;
+                `);
+
+        await transaction.commit();
+
+        return updateResult.recordset[0];
 
     } catch (error) {
 
@@ -736,6 +1477,44 @@ const approveRideRequest = async ({
         }
 
         // ----------------------------------------------------
+        // Departure time negotiation
+        //
+        // - No approved passengers yet -> driver adopting this
+        //   request also adopts its desired_time as the new
+        //   RIDE.departure_time.
+        // - Already has an approved passenger -> departure_time
+        //   is locked. A request whose desired_time doesn't match
+        //   it can't be approved.
+        // ----------------------------------------------------
+
+        const approvedCountResult = await new sql.Request(transaction)
+            .input("id_ride", sql.Int, request.id_ride)
+            .query(`
+                SELECT COUNT(*) AS approvedCount
+                FROM RIDE_REQUEST
+                WHERE id_ride = @id_ride
+                  AND status_request = 'approved'
+            `);
+
+        const isFirstApprovedPassenger =
+            approvedCountResult.recordset[0].approvedCount === 0;
+
+        let newDepartureTime = ride.departure_time;
+
+        if (isFirstApprovedPassenger) {
+            newDepartureTime = request.desired_time;
+        } else {
+            const requestedTime = new Date(request.desired_time).getTime();
+            const lockedTime = new Date(ride.departure_time).getTime();
+
+            if (requestedTime !== lockedTime) {
+                throw new Error(
+                    "This ride's departure time is already fixed by an approved passenger; the requested desired_time no longer matches and cannot be approved"
+                );
+            }
+        }
+
+        // ----------------------------------------------------
         // Check driver's minimum balance
         // ----------------------------------------------------
 
@@ -754,21 +1533,57 @@ const approveRideRequest = async ({
         // ----------------------------------------------------
         // Approve request
         // ----------------------------------------------------
+        
+        const passengerTotal =
+          lockedPrice * Number(request.seats_needed);
 
         const updateRequestResult = await new sql.Request(transaction)
             .input("id_ride_request", sql.Int, id_ride_request)
-            .input("locked_price", sql.Decimal(10, 2), lockedPrice)
+            .input("locked_price", sql.Decimal(10, 2), passengerTotal)
             .query(`
+                DECLARE @UpdatedRequest TABLE (
+                    id_ride_request INT,
+                    id_user INT,
+                    id_ride INT,
+                    seats_needed INT,
+                    creation_date_req DATETIME2,
+                    desired_time DATETIME2,
+                    desired_price DECIMAL(10,2),
+                    id_adresse_pickup INT,
+                    id_adresse_dropoff INT,
+                    status_request NVARCHAR(20),
+                    payment_method NVARCHAR(20),
+                    payment_status NVARCHAR(20)
+                );
+
                 UPDATE RIDE_REQUEST
                 SET
                     status_request = 'approved',
                     desired_price = @locked_price
-                OUTPUT INSERTED.*
-                WHERE id_ride_request = @id_ride_request
-            `);
+                OUTPUT
+                    INSERTED.id_ride_request,
+                    INSERTED.id_user,
+                    INSERTED.id_ride,
+                    INSERTED.seats_needed,
+                    INSERTED.creation_date_req,
+                    INSERTED.desired_time,
+                    INSERTED.desired_price,
+                    INSERTED.id_adresse_pickup,
+                    INSERTED.id_adresse_dropoff,
+                    INSERTED.status_request,
+                    INSERTED.payment_method,
+                    INSERTED.payment_status
+                INTO @UpdatedRequest
+                WHERE id_ride_request = @id_ride_request;
 
+                SELECT * FROM @UpdatedRequest;
+            `);
+        
+        if (updateRequestResult.recordset.length !== 1) {
+            throw new Error("Ride request could not be approved");
+        }
         // ----------------------------------------------------
-        // Decrease available seats
+        // Decrease available seats + apply departure_time
         // ----------------------------------------------------
 
         const newEmptySeats =
@@ -777,14 +1592,16 @@ const approveRideRequest = async ({
         await new sql.Request(transaction)
             .input("id_ride", sql.Int, request.id_ride)
             .input("empty_seats", sql.Int, newEmptySeats)
+            .input("departure_time", sql.DateTime2, newDepartureTime)
             .query(`
                 UPDATE RIDE
                 SET
                     empty_seats = @empty_seats,
+                    departure_time = @departure_time,
                     is_available =
                         CASE
                             WHEN @empty_seats <= 0 THEN 0
-                            ELSE 1
+                            ELSE is_available
                         END
                 WHERE id_ride = @id_ride
             `);
@@ -796,6 +1613,7 @@ const approveRideRequest = async ({
             ride: {
                 ...ride,
                 empty_seats: newEmptySeats,
+                departure_time: newDepartureTime,
                 is_available: newEmptySeats > 0 ? 1 : 0
             }
         };
@@ -829,15 +1647,45 @@ const rejectRideRequest = async ({
         .input("id_ride_request", sql.Int, id_ride_request)
         .input("id_driver", sql.Int, id_driver)
         .query(`
+            DECLARE @UpdatedRequest TABLE (
+                id_ride_request INT,
+                id_user INT,
+                id_ride INT,
+                seats_needed INT,
+                creation_date_req DATETIME2,
+                desired_time DATETIME2,
+                desired_price DECIMAL(10,2),
+                id_adresse_pickup INT,
+                id_adresse_dropoff INT,
+                status_request NVARCHAR(20),
+                payment_method NVARCHAR(20),
+                payment_status NVARCHAR(20)
+            );
+
             UPDATE rr
             SET status_request = 'rejected'
-            OUTPUT INSERTED.*
+            OUTPUT
+                INSERTED.id_ride_request,
+                INSERTED.id_user,
+                INSERTED.id_ride,
+                INSERTED.seats_needed,
+                INSERTED.creation_date_req,
+                INSERTED.desired_time,
+                INSERTED.desired_price,
+                INSERTED.id_adresse_pickup,
+                INSERTED.id_adresse_dropoff,
+                INSERTED.status_request,
+                INSERTED.payment_method,
+                INSERTED.payment_status
+            INTO @UpdatedRequest
             FROM RIDE_REQUEST rr
             INNER JOIN RIDE r
                 ON r.id_ride = rr.id_ride
             WHERE rr.id_ride_request = @id_ride_request
               AND r.id_driver_posted = @id_driver
-              AND rr.status_request = 'pending'
+              AND rr.status_request = 'pending';
+
+            SELECT * FROM @UpdatedRequest;
         `);
 
     if (result.recordset.length === 0) {
@@ -860,27 +1708,155 @@ const cancelRideRequest = async ({
 }) => {
 
     const pool = getPool();
+    const transaction = new sql.Transaction(pool);
 
-    const result = await pool
-        .request()
-        .input("id_ride_request", sql.Int, id_ride_request)
-        .input("id_user", sql.Int, id_user)
-        .query(`
-            UPDATE RIDE_REQUEST
-            SET status_request = 'cancelled'
-            OUTPUT INSERTED.*
-            WHERE id_ride_request = @id_ride_request
-              AND id_user = @id_user
-              AND status_request = 'pending'
-        `);
+    try {
+        await transaction.begin();
 
-    if (result.recordset.length === 0) {
-        throw new Error(
-            "Ride request not found, already processed, or you are not the owner"
-        );
+        // Lock the request and verify ownership/status
+        const requestResult = await transaction
+            .request()
+            .input("id_ride_request", sql.Int, id_ride_request)
+            .input("id_user", sql.Int, id_user)
+            .query(`
+                SELECT
+                    id_ride_request,
+                    id_user,
+                    id_ride,
+                    seats_needed,
+                    creation_date_req,
+                    desired_time,
+                    desired_price,
+                    id_adresse_pickup,
+                    id_adresse_dropoff,
+                    status_request,
+                    payment_method,
+                    payment_status
+                FROM RIDE_REQUEST WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_ride_request = @id_ride_request
+                  AND id_user = @id_user;
+            `);
+
+        if (requestResult.recordset.length === 0) {
+            throw new Error(
+                "Ride request not found or you are not the owner"
+            );
+        }
+
+        const request = requestResult.recordset[0];
+
+        // Pending requests can always be cancelled
+        if (request.status_request === "pending") {
+
+            await transaction
+                .request()
+                .input("id_ride_request", sql.Int, id_ride_request)
+                .query(`
+                    UPDATE RIDE_REQUEST
+                    SET status_request = 'cancelled'
+                    WHERE id_ride_request = @id_ride_request;
+                `);
+        }
+
+        // Approved requests can only be cancelled
+        // if their ride has not started yet
+        else if (request.status_request === "approved") {
+
+            if (request.id_ride === null) {
+                throw new Error(
+                    "Approved request is not associated with a ride"
+                );
+            }
+
+            const rideResult = await transaction
+                .request()
+                .input("id_ride", sql.Int, request.id_ride)
+                .query(`
+                    SELECT
+                        id_ride,
+                        status_ride,
+                        empty_seats,
+                        is_available
+                    FROM RIDE WITH (UPDLOCK, HOLDLOCK)
+                    WHERE id_ride = @id_ride;
+                `);
+
+            if (rideResult.recordset.length === 0) {
+                throw new Error("Associated ride not found");
+            }
+
+            const ride = rideResult.recordset[0];
+
+            if (ride.status_ride !== "active") {
+                throw new Error(
+                    "Approved ride requests can only be cancelled before the ride starts"
+                );
+            }
+
+            // Return the reserved seats to the ride
+            await transaction
+                .request()
+                .input("id_ride", sql.Int, request.id_ride)
+                .input("seats_needed", sql.Int, request.seats_needed)
+                .query(`
+                    UPDATE RIDE
+                    SET empty_seats = empty_seats + @seats_needed
+                    WHERE id_ride = @id_ride
+                      AND status_ride = 'active';
+                `);
+
+            // Cancel the approved request
+            await transaction
+                .request()
+                .input("id_ride_request", sql.Int, id_ride_request)
+                .query(`
+                    UPDATE RIDE_REQUEST
+                    SET status_request = 'cancelled'
+                    WHERE id_ride_request = @id_ride_request;
+                `);
+        }
+
+        else {
+            throw new Error(
+                "Ride request not found, already processed, or cannot be cancelled"
+            );
+        }
+
+        // Return the updated request
+        const result = await transaction
+            .request()
+            .input("id_ride_request", sql.Int, id_ride_request)
+            .query(`
+                SELECT
+                    id_ride_request,
+                    id_user,
+                    id_ride,
+                    seats_needed,
+                    creation_date_req,
+                    desired_time,
+                    desired_price,
+                    id_adresse_pickup,
+                    id_adresse_dropoff,
+                    status_request,
+                    payment_method,
+                    payment_status
+                FROM RIDE_REQUEST
+                WHERE id_ride_request = @id_ride_request;
+            `);
+
+        await transaction.commit();
+
+        return result.recordset[0];
+
+    } catch (error) {
+        try {
+            await transaction.rollback();
+        } catch (rollbackError) {
+            console.error("Rollback failed:", rollbackError);
+        }
+
+        throw error;
     }
-
-    return result.recordset[0];
 };
 
 
@@ -914,12 +1890,42 @@ const updatePaymentMethod = async ({
         .input("id_user", sql.Int, id_user)
         .input("payment_method", sql.NVarChar(20), payment_method)
         .query(`
+            DECLARE @UpdatedRequest TABLE (
+                id_ride_request INT,
+                id_user INT,
+                id_ride INT,
+                seats_needed INT,
+                creation_date_req DATETIME2,
+                desired_time DATETIME2,
+                desired_price DECIMAL(10,2),
+                id_adresse_pickup INT,
+                id_adresse_dropoff INT,
+                status_request NVARCHAR(20),
+                payment_method NVARCHAR(20),
+                payment_status NVARCHAR(20)
+            );
+
             UPDATE RIDE_REQUEST
             SET payment_method = @payment_method
-            OUTPUT INSERTED.*
+            OUTPUT
+                INSERTED.id_ride_request,
+                INSERTED.id_user,
+                INSERTED.id_ride,
+                INSERTED.seats_needed,
+                INSERTED.creation_date_req,
+                INSERTED.desired_time,
+                INSERTED.desired_price,
+                INSERTED.id_adresse_pickup,
+                INSERTED.id_adresse_dropoff,
+                INSERTED.status_request,
+                INSERTED.payment_method,
+                INSERTED.payment_status
+            INTO @UpdatedRequest
             WHERE id_ride_request = @id_ride_request
               AND id_user = @id_user
-              AND payment_status = 'pending'
+              AND payment_status = 'pending';
+
+            SELECT * FROM @UpdatedRequest;
         `);
 
     if (result.recordset.length === 0) {
@@ -948,8 +1954,8 @@ const getActiveRides = async (id_user) => {
                 r.*,
                 u.name_u AS driver_name,
                 u.phone_u AS driver_phone,
-                a1.address_line AS start_address,
-                a2.address_line AS arrive_address
+                a1.libelle AS start_address,
+                a2.libelle AS arrive_address
             FROM RIDE_REQUEST rr
             INNER JOIN RIDE r
                 ON r.id_ride = rr.id_ride
@@ -969,28 +1975,34 @@ const getActiveRides = async (id_user) => {
 };
 
 const payRideRequest = async ({ id_ride_request, id_user }) => {
+
     const pool = getPool();
     const transaction = new sql.Transaction(pool);
 
     try {
+
         await transaction.begin();
 
+        // --------------------------------------------------
         // Lock the ride request
-        const requestResult = await transaction.request()
+        // --------------------------------------------------
+
+        const requestResult = await new sql.Request(transaction)
             .input("id_ride_request", sql.Int, id_ride_request)
             .query(`
                 SELECT
                     rr.id_ride_request,
                     rr.id_user,
                     rr.id_ride,
+                    rr.desired_price,
+                    rr.payment_method,
                     rr.status_request,
                     rr.payment_status,
                     r.status_ride
-                FROM RIDE_REQUEST rr
+                FROM RIDE_REQUEST rr WITH (UPDLOCK, HOLDLOCK)
                 INNER JOIN RIDE r
                     ON rr.id_ride = r.id_ride
                 WHERE rr.id_ride_request = @id_ride_request
-                WITH (UPDLOCK, HOLDLOCK)
             `);
 
         if (requestResult.recordset.length === 0) {
@@ -999,22 +2011,40 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
 
         const request = requestResult.recordset[0];
 
-        // Make sure this request belongs to the passenger
-        if (request.id_user !== id_user) {
-            throw new Error("You are not authorized to pay this ride request");
+        // --------------------------------------------------
+        // Authorization
+        // --------------------------------------------------
+
+        if (Number(request.id_user) !== Number(id_user)) {
+            throw new Error(
+                "You are not authorized to pay this ride request"
+            );
         }
 
-        // Only approved requests can be paid
+        // --------------------------------------------------
+        // Request must be approved
+        // --------------------------------------------------
+
         if (request.status_request !== "approved") {
-            throw new Error("Only an approved ride request can be paid");
+            throw new Error(
+                "Only an approved ride request can be paid"
+            );
         }
 
-        // Payment cannot be made twice
+        // --------------------------------------------------
+        // Prevent double payment
+        // --------------------------------------------------
+
         if (request.payment_status === "paid") {
-            throw new Error("Ride request has already been paid");
+            throw new Error(
+                "Ride request has already been paid"
+            );
         }
 
-        // Payment is allowed while the ride is in progress or completed
+        // --------------------------------------------------
+        // Payment state
+        // --------------------------------------------------
+
         if (
             request.status_ride !== "in_progress" &&
             request.status_ride !== "completed"
@@ -1024,19 +2054,156 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
             );
         }
 
-        // Mark payment as completed
-        const updateResult = await transaction.request()
+        // --------------------------------------------------
+        // Validate payment method
+        // --------------------------------------------------
+
+        const paymentMethod = request.payment_method;
+
+        if (
+            paymentMethod !== "cash" &&
+            paymentMethod !== "wallet" &&
+            paymentMethod !== "baridimob"
+        ) {
+            throw new Error(
+                "Invalid payment method"
+            );
+        }
+
+        if (paymentMethod === "wallet") {
+
+            // --------------------------------------------------
+            // Wallet payment
+            // --------------------------------------------------
+    
+            if (paymentMethod === "wallet") {
+    
+                const amount = Number(request.desired_price);
+    
+                if (!Number.isFinite(amount) || amount <= 0) {
+                    throw new Error(
+                        "Invalid ride payment amount"
+                    );
+                }
+    
+                // ----------------------------------------------
+                // Lock passenger wallet
+                // ----------------------------------------------
+    
+                const walletResult = await new sql.Request(transaction)
+                    .input("id_user", sql.Int, id_user)
+                    .query(`
+                        SELECT
+                            id_wallet,
+                            balance
+                        FROM WALLET WITH (UPDLOCK, HOLDLOCK)
+                        WHERE id_user = @id_user
+                    `);
+    
+                if (walletResult.recordset.length === 0) {
+                    throw new Error(
+                        "Passenger wallet not found"
+                    );
+                }
+    
+                const wallet = walletResult.recordset[0];
+                const currentBalance = Number(wallet.balance);
+    
+                if (
+                    !Number.isFinite(currentBalance) ||
+                    currentBalance < amount
+                ) {
+                    throw new Error(
+                        `Insufficient wallet balance. Required: ${amount.toFixed(2)} DA, available: ${currentBalance.toFixed(2)} DA`
+                    );
+                }
+    
+                const newBalance = currentBalance - amount;
+    
+                // ----------------------------------------------
+                // Debit wallet
+                // ----------------------------------------------
+    
+                const walletUpdateResult = await new sql.Request(transaction)
+                    .input("id_wallet", sql.Int, wallet.id_wallet)
+                    .input("new_balance", sql.Decimal(10, 2), newBalance)
+                    .query(`
+                        UPDATE WALLET
+                        SET balance = @new_balance
+                        WHERE id_wallet = @id_wallet
+                    `);
+    
+                if (walletUpdateResult.rowsAffected[0] !== 1) {
+                    throw new Error(
+                        "Wallet debit could not be completed"
+                    );
+                }
+    
+                // ----------------------------------------------
+                // Record wallet transaction
+                // ----------------------------------------------
+    
+                await new sql.Request(transaction)
+                    .input("type", sql.NVarChar, "debit")
+                    .input("amount", sql.Decimal(10, 2), amount)
+                    .input("balance_after", sql.Decimal(10, 2), newBalance)
+                    .input(
+                        "transaction_reason",
+                        sql.NVarChar,
+                        "ride_payment"
+                    )
+                    .input("id_wallet", sql.Int, wallet.id_wallet)
+                    .input("id_ride", sql.Int, request.id_ride)
+                    .query(`
+                        INSERT INTO WALLET_TRANSACTION
+                        (
+                            type,
+                            amount,
+                            balance_after,
+                            transaction_reason,
+                            id_wallet,
+                            id_ride
+                        )
+                        VALUES
+                        (
+                            @type,
+                            @amount,
+                            @balance_after,
+                            @transaction_reason,
+                            @id_wallet,
+                            @id_ride
+                        )
+                    `);
+            }
+        }
+        // --------------------------------------------------
+        // Mark ride request as paid
+        // --------------------------------------------------
+
+        const updateResult = await new sql.Request(transaction)
             .input("id_ride_request", sql.Int, id_ride_request)
             .query(`
                 UPDATE RIDE_REQUEST
                 SET payment_status = 'paid'
                 WHERE id_ride_request = @id_ride_request
-                  AND payment_status = 'pending'
+                  AND payment_status = 'pending';
+
+                SELECT @@ROWCOUNT AS rows_updated;
             `);
 
-        if (updateResult.rowsAffected[0] !== 1) {
-            throw new Error("Payment could not be completed");
+        const rowsUpdated = Number(
+            updateResult.recordset[0].rows_updated
+        );
+
+        if (rowsUpdated !== 1) {
+            throw new Error(
+                "Payment could not be completed"
+            );
         }
+
+        // --------------------------------------------------
+        // Commit everything atomically
+        // --------------------------------------------------
 
         await transaction.commit();
 
@@ -1047,6 +2214,7 @@ const payRideRequest = async ({ id_ride_request, id_user }) => {
         };
 
     } catch (error) {
+
         try {
             await transaction.rollback();
         } catch (_) {}
@@ -1066,6 +2234,9 @@ module.exports = {
     getRideRequests,
     getOpenRideRequests,
     acceptOpenRideRequest,
+    negotiateRideRequest,
+    acceptRideNegotiation,
+    rejectRideNegotiation,
     requestToJoinRide,
     approveRideRequest,
     rejectRideRequest,

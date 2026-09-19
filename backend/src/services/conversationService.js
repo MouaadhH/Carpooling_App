@@ -10,28 +10,28 @@ const getOrCreateConversation = async ({
     // Get ride and verify the authenticated user is either
     // the driver or an approved passenger.
     const rideResult = await pool
-    .request()
-    .input("id_ride", sql.Int, id_ride)
-    .input("id_user", sql.Int, id_user)
-    .query(`
-        SELECT
-            r.id_ride,
-            r.id_driver_posted
-        FROM RIDE r
-        WHERE r.id_ride = @id_ride
-          AND r.status_ride IN ('active', 'in_progress', 'completed')
-          AND (
-                r.id_driver_posted = @id_user
+        .request()
+        .input("id_ride", sql.Int, id_ride)
+        .input("id_user", sql.Int, id_user)
+        .query(`
+            SELECT
+                r.id_ride,
+                r.id_driver_posted
+            FROM RIDE r
+            WHERE r.id_ride = @id_ride
+              AND r.status_ride IN ('active', 'in_progress', 'completed')
+              AND (
+                    r.id_driver_posted = @id_user
 
-                OR EXISTS (
-                    SELECT 1
-                    FROM RIDE_REQUEST rr
-                    WHERE rr.id_ride = r.id_ride
-                      AND rr.id_user = @id_user
-                      AND rr.status_request = 'approved'
-                )
-              );
-    `);
+                    OR EXISTS (
+                        SELECT 1
+                        FROM RIDE_REQUEST rr
+                        WHERE rr.id_ride = r.id_ride
+                          AND rr.id_user = @id_user
+                          AND rr.status_request = 'approved'
+                    )
+                  );
+        `);
 
     if (rideResult.recordset.length === 0) {
         throw new Error(
@@ -175,6 +175,7 @@ const getConversationContact = async ({
             : conversation.driver_phone
     };
 };
+
 const authorizeCall = async ({
     id_conversation,
     caller_id,
@@ -289,6 +290,7 @@ const authorizeCall = async ({
         receiver_id: Number(receiver_id)
     };
 };
+
 module.exports = {
     getOrCreateConversation,
     getConversationContact,

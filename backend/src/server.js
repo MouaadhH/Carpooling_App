@@ -50,19 +50,29 @@ app.use("/api/conversations", messageRoutes);
 app.use("/api/vehicles", vehicleRoutes);
 app.use("/api/drivers", driverProfileRoutes);
 
-connectDB();
 
-// Create HTTP server from Express
+// =========================================================
+// HTTP SERVER
+// =========================================================
+
 const server = http.createServer(app);
 
-// Create Socket.IO server
+
+// =========================================================
+// SOCKET.IO SERVER
+// =========================================================
+
 const io = new Server(server, {
     cors: {
         origin: "*"
     }
 });
 
-// Authenticate Socket.IO connection
+
+// =========================================================
+// SOCKET.IO AUTHENTICATION
+// =========================================================
+
 io.use((socket, next) => {
     try {
         const token = socket.handshake.auth?.token;
@@ -85,9 +95,17 @@ io.use((socket, next) => {
     }
 });
 
+
+// =========================================================
+// SOCKET.IO CONNECTION
+// =========================================================
+
 io.on("connection", (socket) => {
 
+    // ---------------------------------------------------------
     // Helper used by all call events
+    // ---------------------------------------------------------
+
     const authorizeSocketCall = async ({
         id_conversation,
         caller_id,
@@ -101,18 +119,25 @@ io.on("connection", (socket) => {
         });
     };
 
-    // Send authorization errors only to the current user
+
+    // ---------------------------------------------------------
+    // Send authorization errors only to current user
+    // ---------------------------------------------------------
+
     const emitCallError = (message) => {
         socket.emit("call_error", {
             message
         });
     };
 
+
     console.log(
         `User ${socket.user.id_user} connected with socket ${socket.id}`
     );
 
+
     // Join user's private Socket.IO room
+
     socket.join(`user_${socket.user.id_user}`);
 
     console.log(
@@ -496,15 +521,36 @@ io.on("connection", (socket) => {
 });
 
 
-// Start server
-server.listen(PORT, () => {
+// =========================================================
+// START SERVER
+// =========================================================
 
-    console.log(
-        `Server running on http://localhost:${PORT}`
-    );
+const startServer = async () => {
 
-    console.log(
-        "Socket.IO server is ready"
-    );
+    try {
 
-});
+        await connectDB();
+
+        server.listen(PORT, () => {
+
+            console.log(
+                `Server running on http://localhost:${PORT}`
+            );
+
+            console.log(
+                "Socket.IO server is ready"
+            );
+
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Server startup failed because the database connection failed."
+        );
+
+        process.exit(1);
+    }
+};
+
+startServer();
