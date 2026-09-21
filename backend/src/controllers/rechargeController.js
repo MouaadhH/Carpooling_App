@@ -7,42 +7,90 @@ const {
 } = require("../services/rechargeService");
 /*Create a recharge request.
 
-    POST /api/wallet/recharge
+const {
+
+    createCheckout
+
+} = require("../services/chargilyService");
+
+/*Create a recharge request.
+
+*    POST /api/wallet/recharge*
+
 */
+
 const createRechargeController = async (req, res) => {
+
     try {
+
         const {
+
             amount,
+
             transaction_reference
+
         } = req.body;
 
         if (!amount || Number(amount) <= 0) {
+
             return res.status(400).json({
+
                 message: "Amount must be greater than zero"
+
             });
+
         }
 
         const id_user = req.user.id_user;
 
+        // 1. Create the Wassalni recharge request
+
         const rechargeRequest = await createRechargeRequest({
+
             id_user,
+
             amount,
+
             transaction_reference
+
         });
 
+        // 2. Create the corresponding Chargily checkout
+
+        const checkout = await createCheckout({
+
+            amount: rechargeRequest.amount,
+
+            rechargeRequestId: rechargeRequest.id_request_recharge
+
+        });
+
+        // 3. Return both to the frontend
+
         res.status(201).json({
+
             message: "Recharge request created successfully",
-            rechargeRequest
+
+            rechargeRequest,
+
+            checkout_url: checkout.checkout_url
+
         });
 
     } catch (error) {
+
         console.error("CREATE RECHARGE ERROR:", error);
 
         res.status(400).json({
+
             message: "Failed to create recharge request",
+
             error: error.message
+
         });
+
     }
+
 };
 
 
