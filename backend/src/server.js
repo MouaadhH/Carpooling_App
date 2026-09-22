@@ -22,12 +22,27 @@ const messageRoutes = require("./routes/messageRoutes");
 const vehicleRoutes = require("./routes/vehicleRoutes");
 const driverProfileRoutes = require("./routes/driverProfileRoutes");
 
+const chargilyWebhookRoutes = require("./routes/chargilyWebhookRoutes");
+
 const app = express();
 
 const PORT = 3000;
 
+// CHARGILY WEBHOOK
+// we put it here Express has already converted the request body into a JavaScript object.
+app.use(
+    "/api/webhooks/chargily",
+    chargilyWebhookRoutes
+);
+
+// GLOBAL MIDDLEWARE
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "..")));
+
+app.use(
+    express.static(
+        path.join(__dirname, "..")
+    )
+);
 
 app.get("/", (req, res) => {
     res.json({

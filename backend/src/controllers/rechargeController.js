@@ -5,7 +5,6 @@ const {
     approveRecharge,
     rejectRecharge
 } = require("../services/rechargeService");
-/*Create a recharge request.
 
 const {
 

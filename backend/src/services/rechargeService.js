@@ -210,7 +210,13 @@ const approveRecharge = async ({
             the wallet twice.
         */
         if (recharge.status_recharge === "approved") {
-            throw new Error("Recharge request has already been approved");
+            return {
+            id_request_recharge: recharge.id_request_recharge,
+            amount: recharge.amount,
+            new_balance: Number(recharge.balance),
+            status_recharge: "approved",
+            already_processed: true
+        };
         }
 
         if (recharge.status_recharge !== "pending") {
@@ -351,10 +357,50 @@ const rejectRecharge = async ({
 };
 
 
+
+/**
+ * Get a recharge request by ID.
+ *
+ * Used internally by trusted payment/webhook processing.
+ * Unlike getRechargeRequest(), this does not require a user ID.
+ */
+const getRechargeRequestById = async ({
+    id_request_recharge
+}) => {
+    const pool = getPool();
+
+    const result = await pool
+        .request()
+        .input(
+            "id_request_recharge",
+            sql.Int,
+            id_request_recharge
+        )
+        .query(`
+            SELECT
+                rr.id_request_recharge,
+                rr.amount,
+                rr.transaction_reference,
+                rr.status_recharge,
+                rr.creation_date_recharge,
+                rr.id_wallet,
+                rr.id_admin_check
+            FROM RECHARGE_REQUEST rr
+            WHERE rr.id_request_recharge = @id_request_recharge
+        `);
+
+    if (result.recordset.length === 0) {
+        throw new Error("Recharge request not found");
+    }
+
+    return result.recordset[0];
+};
+
 module.exports = {
     createRechargeRequest,
     getRechargeRequest,
     getMyRechargeRequests,
     approveRecharge,
-    rejectRecharge
+    rejectRecharge,
+    getRechargeRequestById
 };
